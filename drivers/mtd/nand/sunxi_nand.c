@@ -203,6 +203,23 @@ struct sunxi_nand_hw_ecc {
 };
 
 /*
+ * sunxi NAND partition structure: stores NAND partitions informations
+ *
+ * @part: base paritition structure
+ * @ecc: per-partition ECC info
+ */
+struct sunxi_nand_part {
+	struct nand_part part;
+	struct nand_ecc_ctrl ecc;
+};
+
+static inline struct sunxi_nand_part *
+to_sunxi_nand_part(struct nand_part *part)
+{
+	return container_of(part, struct sunxi_nand_part, part);
+}
+
+/*
  * NAND chip structure: stores NAND chip device related informations
  *
  * @node:		used to store NAND chips into a list
@@ -496,7 +513,7 @@ static int sunxi_nfc_hw_ecc_read_page(struct mtd_info *mtd,
 				      int oob_required, int page)
 {
 	struct sunxi_nfc *nfc = to_sunxi_nfc(chip->controller);
-	struct nand_ecc_ctrl *ecc = &chip->ecc;
+	struct nand_ecc_ctrl *ecc = chip->cur_ecc;
 	struct nand_ecclayout *layout = ecc->layout;
 	struct sunxi_nand_hw_ecc *data = ecc->priv;
 	int steps = mtd->writesize / ecc->size;
@@ -571,7 +588,7 @@ static int sunxi_nfc_hw_ecc_write_page(struct mtd_info *mtd,
 				       const uint8_t *buf, int oob_required)
 {
 	struct sunxi_nfc *nfc = to_sunxi_nfc(chip->controller);
-	struct nand_ecc_ctrl *ecc = &chip->ecc;
+	struct nand_ecc_ctrl *ecc = chip->cur_ecc;
 	struct nand_ecclayout *layout = ecc->layout;
 	struct sunxi_nand_hw_ecc *data = ecc->priv;
 	int offset;
@@ -639,7 +656,7 @@ static int sunxi_nfc_hw_syndrome_ecc_read_page(struct mtd_info *mtd,
 					       int page)
 {
 	struct sunxi_nfc *nfc = to_sunxi_nfc(chip->controller);
-	struct nand_ecc_ctrl *ecc = &chip->ecc;
+	struct nand_ecc_ctrl *ecc = chip->cur_ecc;
 	struct sunxi_nand_hw_ecc *data = ecc->priv;
 	int steps = mtd->writesize / ecc->size;
 	unsigned int max_bitflips = 0;
@@ -703,7 +720,7 @@ static int sunxi_nfc_hw_syndrome_ecc_write_page(struct mtd_info *mtd,
 						int oob_required)
 {
 	struct sunxi_nfc *nfc = to_sunxi_nfc(chip->controller);
-	struct nand_ecc_ctrl *ecc = &chip->ecc;
+	struct nand_ecc_ctrl *ecc = chip->cur_ecc;
 	struct sunxi_nand_hw_ecc *data = ecc->priv;
 	int steps = mtd->writesize / ecc->size;
 	uint8_t *oob = chip->oob_poi;
@@ -1062,6 +1079,11 @@ static int sunxi_nand_ecc_init(struct mtd_info *mtd, struct nand_ecc_ctrl *ecc,
 		ecc->strength = nand->ecc_strength_ds;
 	}
 
+	if ((!ecc->size || !ecc->strength) && ecc != &nand->ecc) {
+		ecc->size = nand->ecc.size;
+		ecc->strength = nand->ecc.strength;
+	}
+
 	ecc->mode = NAND_ECC_HW;
 
 	ret = of_get_nand_ecc_mode(np);
@@ -1094,12 +1116,39 @@ static int sunxi_nand_ecc_init(struct mtd_info *mtd, struct nand_ecc_ctrl *ecc,
 	return 0;
 }
 
+static void sunxi_nand_part_release(struct nand_part *part)
+{
+	kfree(to_sunxi_nand_part(part));
+}
+
+struct nand_part *sunxi_ofnandpart_parse(void *priv, struct mtd_info *master,
+					 struct device_node *pp)
+{
+	struct sunxi_nand_part *part;
+	int ret;
+
+	part = kzalloc(sizeof(*part), GFP_KERNEL);
+	part->part.release = sunxi_nand_part_release;
+
+	ret = sunxi_nand_ecc_init(master, &part->ecc, pp);
+	if (ret)
+		goto err;
+
+	part->part.ecc = &part->ecc;
+
+	return &part->part;
+
+err:
+	kfree(part);
+	return ERR_PTR(ret);
+}
+
 static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 				struct device_node *np)
 {
 	const struct nand_sdr_timings *timings;
 	struct sunxi_nand_chip *chip;
-	struct mtd_part_parser_data ppdata;
+	struct ofnandpart_data ppdata;
 	struct mtd_info *mtd;
 	struct nand_chip *nand;
 	int nsels;
@@ -1206,8 +1255,14 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 		mtd->name = chip->default_name;
 	}
 
-	ppdata.of_node = np;
-	ret = mtd_device_parse_register(mtd, NULL, &ppdata, NULL, 0);
+	ppdata.node = np;
+	ppdata.parse = sunxi_ofnandpart_parse;
+	ret = ofnandpart_parse(mtd, &ppdata);
+	if (!ret)
+		ret = mtd_device_register(mtd, NULL, 0);
+	else if (ret > 0)
+		ret = 0;
+
 	if (ret) {
 		nand_release(mtd);
 		return ret;
