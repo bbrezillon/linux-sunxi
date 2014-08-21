@@ -3420,7 +3420,7 @@ static int nand_part_block_isbad(struct mtd_info *mtd, loff_t offs)
 {
 	struct nand_part *part = to_nand_part(mtd);
 
-	return nand_block_checkbad(mtd, part->offset + offs, 1, 0);
+	return nand_block_checkbad(part->master, part->offset + offs, 1, 0);
 }
 
 /**
@@ -3455,7 +3455,7 @@ static int nand_part_block_markbad(struct mtd_info *mtd, loff_t ofs)
 	int ret;
 
 	ofs += part->offset;
-	ret = nand_block_isbad(mtd, ofs);
+	ret = nand_block_isbad(part->master, ofs);
 	if (ret) {
 		/* If it was bad already, return success and do nothing */
 		if (ret > 0)
@@ -3463,7 +3463,11 @@ static int nand_part_block_markbad(struct mtd_info *mtd, loff_t ofs)
 		return ret;
 	}
 
-	return nand_block_markbad_lowlevel(mtd, ofs);
+	ret = nand_block_markbad_lowlevel(part->master, ofs);
+	if (!ret)
+		mtd->ecc_stats.badblocks++;
+
+	return ret;
 }
 
 /**
@@ -4773,6 +4777,18 @@ int nand_add_partition(struct mtd_info *master, struct nand_part *part)
 	if (ret) {
 		list_del(&part->node);
 		goto out;
+	}
+
+	if (master->_block_isbad) {
+		uint64_t offs = 0;
+
+		while (offs < mtd->size) {
+			if (mtd_block_isreserved(master, offs + part->offset))
+				mtd->ecc_stats.bbtblocks++;
+			else if (mtd_block_isbad(master, offs + part->offset))
+				mtd->ecc_stats.badblocks++;
+			offs += mtd->erasesize;
+		}
 	}
 
 out:
