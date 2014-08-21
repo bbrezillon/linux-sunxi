@@ -1603,6 +1603,8 @@ static void sunxi_nand_ecc_cleanup(struct nand_ecc_ctrl *ecc)
 	case NAND_ECC_HW_SYNDROME:
 		sunxi_nand_hw_common_ecc_ctrl_cleanup(ecc);
 		break;
+	case NAND_ECC_NONE:
+		kfree(ecc->layout);
 	default:
 		break;
 	}
@@ -1653,6 +1655,10 @@ static int sunxi_nand_ecc_init(struct mtd_info *mtd, struct nand_ecc_ctrl *ecc,
 			return ret;
 		break;
 	case NAND_ECC_NONE:
+		ecc->layout = kzalloc(sizeof(*ecc->layout), GFP_KERNEL);
+		if (!ecc->layout)
+			return -ENOMEM;
+		ecc->layout->oobfree[0].length = mtd->oobsize;
 	case NAND_ECC_SOFT:
 		break;
 	default:
