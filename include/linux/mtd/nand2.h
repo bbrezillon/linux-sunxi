@@ -21,20 +21,40 @@ struct nand_operation {
 		const u8 *out;
 		u8 *in;
 	} data[2];
-	u32 len[2];
+	size_t len[2];
 };
 
 struct nand_controller_ops {
+	int (*add)(struct nand_controller *controller,
+		   struct nand_device *dev);
+	int (*remove)(struct nand_controller *controller,
+		      struct nand_device *dev);
 	void (*select)(struct nand_device *dev, int chip);
 	int (*launch)(struct nand_device *dev,
 		      const struct nand_operation *op);
+	bool (*supported)(struct nand_controller *controller,
+			  const struct nand_operation *op);
 };
 
 struct nand_controller {
+	struct device dev;
 	struct mutex lock;
 	struct nand_device *active;
 	wait_queue_head_t wq;
 	const struct nand_controller_ops *ops;
+	struct nand_device **devices;
+};
+
+struct nand_basic_controller_ops {
+	void (*write_buf)(struct nand_device *dev, const void *buf, int len);
+	void (*read_buf)(struct nand_device *dev, void *buf, int len);
+	void (*cmd_ctrl)(struct nand_device *dev, int dat, unsigned int ctrl);
+	int (*waitfunc)(struct nand_device *dev);
+};
+
+struct nand_basic_controller {
+	struct nand_controller base;
+	struct nand_basic_controller_ops *ops;
 };
 
 enum nand_interface_type {
@@ -62,40 +82,100 @@ struct nand_interface {
 };
 
 struct nand_ecc_controller_ops {
-	int (*read_page_raw)(struct nand_device *dev, struct nand_chip *chip,
+	int (*read)(struct nand_device *dev, int page, int column,
+		    void *buf, size_t len);
+	int (*write)(struct nand_device *dev, int page, int column,
+		     const void *buf, size_t len);
+
+	int (*read_page_raw)(struct nand_device *dev,
 			     void *buf, int oob_required, int page);
-	int (*write_page_raw)(struct nand_device *dev, struct nand_chip *chip,
+	int (*write_page_raw)(struct nand_device *dev,
 			      const void *buf, int oob_required);
-	int (*read_page)(struct nand_device *dev, struct nand_chip *chip,
+	int (*read_page)(struct nand_device *dev,
 			 void *buf, int oob_required, int page);
-	int (*read_subpage)(struct nand_device *dev, struct nand_chip *chip,
+	int (*read_subpage)(struct nand_device *dev,
 			    uint32_t offs, uint32_t len, void *buf, int page);
-	int (*write_subpage)(struct nand_device *dev, struct nand_chip *chip,
+	int (*write_subpage)(struct nand_device *dev,
 			     uint32_t offset, uint32_t data_len,
 			     const void *data_buf, int oob_required);
-	int (*write_page)(struct nand_device *dev, struct nand_chip *chip,
+	int (*write_page)(struct nand_device *dev,
 			  const void *buf, int oob_required);
-	int (*write_oob_raw)(struct nand_device *dev, struct nand_chip *chip,
-			     int page);
-	int (*read_oob_raw)(struct nand_device *dev, struct nand_chip *chip,
-			    int page);
-	int (*read_oob)(struct nand_device *dev, struct nand_chip *chip,
-			int page);
-	int (*write_oob)(struct nand_device *dev, struct nand_chip *chip,
-			 int page);
+	int (*write_oob_raw)(struct nand_device *dev, int page);
+	int (*read_oob_raw)(struct nand_device *dev, int page);
+	int (*read_oob)(struct nand_device *dev, int page);
+	int (*write_oob)(struct nand_device *dev, int page);
+
+	bool (*supported)(struct nand_ecc_controller *controller,
+			  const struct nand_operation *op);
+};
+
+enum nand_page_region_type {
+	NAND_PAYLOAD_DATA,
+	NAND_OOB_AVAILABLE,
+	NAND_OOB_ECC,
+};
+
+struct nand_page_range {
+	int start;
+	int stop;
+};
+
+struct nand_page_region {
+	enum nand_page_region_type type;
+	struct nand_page_range phys;
+	struct nand_page_range virt;
+};
+
+struct nand_page_layout {
+	int nregions;
+	struct nand_page_area *regions;
 };
 
 struct nand_ecc_controller {
-	int steps;
-	int size;
-	int bytes;
-	int total;
-	int strength;
-	int prepad;
-	int postpad;
-	struct nand_ecclayout *layout;
 	struct nand_ecc_controller_ops *ops;
 };
+
+struct nand_ecc_requirements {
+	int step;
+	int strength;
+};
+
+struct nand_ecc_desc {
+	int step;
+	int strength;
+	struct nand_page_layout pagelayout;
+	struct nand_ecclayout *ecclayout;
+	struct nand_ecc_controller *controller;
+};
+
+struct nand_ecc {
+	struct nand_ecc_requirements requirements;
+	struct nand_ecc_desc *desc;
+};
+
+struct nand_basic_ecc_controller_ops {
+	int (*enable)(struct nand_device *dev);
+	int (*disable)(struct nand_device *dev);
+	int (*reset)(struct nand_device *dev);
+	int (*read_chunk)(struct nand_device *dev, struct nand_operation *op,
+			  int id);
+	int (*read_page)(struct nand_device *dev, struct nand_operation *op);
+	int (*write_subpage)(struct nand_device *dev,
+			     struct nand_operation *op, int id);
+	int (*write_page)(struct nand_device *dev, struct nand_operation *op);
+};
+
+struct nand_basic_ecc_controller {
+	struct nand_ecc_controller base;
+	struct nand_basic_ecc_controller_ops *ops;
+};
+
+static inline struct nand_basic_ecc_controller *
+to_basic_ecc_controller(struct nand_ecc_controller *controller)
+{
+	return container_of(controller, struct nand_basic_ecc_controller,
+			    base);
+}
 
 struct nand_bad_block {
 	int badblockpos;
@@ -127,19 +207,18 @@ struct nand_device {
 	unsigned int pagebuf_bitflips;
 	int subpagesize;
 	u8 bits_per_cell;
-	u16 ecc_strength_ds;
-	u16 ecc_step_ds;
-	int onfi_timing_mode_default;
 
 	struct nand_interface interface;
 
 	struct nand_controller *controller;
+	void *controller_priv;
 
 	int read_retries;
 
 	flstate_t state;
 
-	struct nand_ecc_controller *ecc;
+	struct nand_ecc ecc;
+
 	struct nand_buffers *buffers;
 
 	struct nand_bad_block bb;
