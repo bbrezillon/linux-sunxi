@@ -25,10 +25,10 @@ struct nand_operation {
 };
 
 struct nand_controller_ops {
-	int (*add)(struct nand_controller *controller,
-		   struct nand_device *dev);
-	int (*remove)(struct nand_controller *controller,
-		      struct nand_device *dev);
+	int (*initialize)(struct nand_device *dev);
+	int (*cleanup)(struct nand_device *dev);
+	int (*add)(struct nand_device *dev);
+	int (*remove)(struct nand_device *dev);
 	void (*select)(struct nand_device *dev, int chip);
 	int (*launch)(struct nand_device *dev,
 		      const struct nand_operation *op);
@@ -36,13 +36,20 @@ struct nand_controller_ops {
 			  const struct nand_operation *op);
 };
 
+struct nand_devices {
+	struct list_head list;
+	struct mutex lock;
+};
+
 struct nand_controller {
+	struct list_head node;
 	struct device dev;
 	struct mutex lock;
 	struct nand_device *active;
 	wait_queue_head_t wq;
 	const struct nand_controller_ops *ops;
-	struct nand_device **devices;
+	struct nand_devices devices;
+	int numcs;
 };
 
 struct nand_basic_controller_ops {
@@ -57,10 +64,17 @@ struct nand_basic_controller {
 	struct nand_basic_controller_ops *ops;
 };
 
-enum nand_interface_type {
+enum nand_sw_interface_type {
 	NAND_NONSTD,
 	NAND_ONFI,
 	NAND_JEDEC,
+};
+
+struct nand_driver {
+	struct device_driver driver;
+	const struct nand_device_id *id_table;
+	int (*probe)(struct nand_device *dev);
+	int (*remove)(struct nand_device *dev);
 };
 
 struct nand_onfi {
@@ -73,8 +87,8 @@ struct nand_jedec {
 	struct nand_jedec_params params;
 };
 
-struct nand_interface {
-	enum nand_interface_type type;
+struct nand_sw_interface {
+	enum nand_sw_interface_type type;
 	union {
 		struct nand_onfi onfi;
 		struct nand_jedec jedec;
@@ -187,12 +201,39 @@ struct nand_bad_block {
 	struct nand_bbt_descr *badblock_pattern;
 };
 
-struct nand_device {
-	struct mtd_info mtd;
+struct nand_cs {
+	int num;
+	int *ids;
+};
+
+enum nand_hw_interface_type {
+	NAND_SDR,
+};
+
+struct nand_hw_interface {
+	struct nand_cs cs;
+	int buswidth;
+	enum nand_hw_interface_type type;
 	union {
 		struct nand_sdr_timings sdr;
 	} timings;
+};
 
+struct nand_layout {
+	int page_shift;
+	int phys_erase_shift;
+	int bbt_erase_shift;
+	int chip_shift;
+	u64 chipsize;
+	int pagemask;
+};
+
+struct nand_device {
+	struct list_head node;
+	struct device dev;
+	struct mtd_info mtd;
+
+	u8 id[2];
 	unsigned int options;
 	unsigned int bbt_options;
 
@@ -208,7 +249,8 @@ struct nand_device {
 	int subpagesize;
 	u8 bits_per_cell;
 
-	struct nand_interface interface;
+	struct nand_hw_interface hw_interface;
+	struct nand_sw_interface sw_interface;
 
 	struct nand_controller *controller;
 	void *controller_priv;
@@ -226,7 +268,25 @@ struct nand_device {
 	void *priv;
 };
 
+static struct nand_device *dev_to_nand(struct device *dev)
+{
+	return container_of(dev, struct nand_device, dev);
+}
+
 static struct nand_device *mtd_to_nand(struct mtd_info *mtd)
 {
 	return container_of(mtd, struct nand_device, mtd);
 }
+
+static inline void *nand_controller_get_devdata(struct nand_controller *ctrl)
+{
+	return dev_get_drvdata(&ctrl->dev);
+}
+
+static inline void nand_controller_set_devdata(struct nand_controller *ctrl,
+					       void *data)
+{
+	dev_set_drvdata(&ctrl->dev, data);
+}
+
+struct nand_controller *nand_controller_alloc(struct device *dev, unsigned size);

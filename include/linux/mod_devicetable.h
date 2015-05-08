@@ -629,4 +629,12 @@ struct mcb_device_id {
 	kernel_ulong_t driver_data;
 };
 
+#define NAND_ANY_DEVICE		0xffff
+#define NAND_MODALIAS_FMT	"nand:m%02xd%02x"
+
+struct nand_device_id {
+	__u8 manufacturer;
+	__u16 device;
+};
+
 #endif /* LINUX_MOD_DEVICETABLE_H */
