@@ -1,6 +1,8 @@
 #include <linux/mtd/nand.h>
 
 struct nand_device;
+struct nand_controller;
+struct nand_ecc_controller;
 
 enum nand_operation_dir {
 	NAND_OP_NONE,
@@ -9,29 +11,47 @@ enum nand_operation_dir {
 };
 
 struct nand_operation {
+	struct list_head node;
+	struct nand_device *dev;
+	int chip;
 	u8 ncmds;
-	u8 cmds[3];
-	u8 naddrs[2];
-	u8 addrs[2][5];
-	bool wait_ready[3];
-	int page[2];
-	int column[2];
+	u8 cmds[2];
+	u8 naddrs;
+	u8 addrs[5];
+	bool wait_ready;
+	int page;
+	int column;
 	enum nand_operation_dir dir;
-	union {
-		const u8 *out;
-		u8 *in;
-	} data[2];
-	size_t len[2];
+	struct {
+		union {
+			const u8 *out;
+			u8 *in;
+		};
+		size_t len;
+	} data;
+	unsigned long timeout;
+	bool eightbitmode;
+
+	void (*complete)(struct nand_operation *op, int result);
+	void *priv;
+};
+
+struct nand_operation_seq {
+	int nops;
+	struct nand_operation *ops;
 };
 
 struct nand_controller_ops {
 	int (*initialize)(struct nand_device *dev);
-	int (*cleanup)(struct nand_device *dev);
+	void (*cleanup)(struct nand_device *dev);
 	int (*add)(struct nand_device *dev);
 	int (*remove)(struct nand_device *dev);
 	void (*select)(struct nand_device *dev, int chip);
-	int (*launch)(struct nand_device *dev,
-		      const struct nand_operation *op);
+	int (*launch_op)(struct nand_device *dev,
+		         const struct nand_operation *op);
+	int (*launch_seq)(struct nand_device *dev,
+			  const struct nand_operation_seq *seq);
+	int (*apply_timings)(struct nand_device *dev);
 	bool (*supported)(struct nand_controller *controller,
 			  const struct nand_operation *op);
 };
@@ -64,17 +84,17 @@ struct nand_basic_controller {
 	struct nand_basic_controller_ops *ops;
 };
 
-enum nand_sw_interface_type {
-	NAND_NONSTD,
-	NAND_ONFI,
-	NAND_JEDEC,
-};
-
 struct nand_driver {
 	struct device_driver driver;
 	const struct nand_device_id *id_table;
 	int (*probe)(struct nand_device *dev);
 	int (*remove)(struct nand_device *dev);
+};
+
+enum nand_sw_interface_type {
+	NAND_NONSTD,
+	NAND_ONFI,
+	NAND_JEDEC,
 };
 
 struct nand_onfi {
@@ -268,12 +288,22 @@ struct nand_device {
 	void *priv;
 };
 
-static struct nand_device *dev_to_nand(struct device *dev)
+static inline void nand_set_ctrldata(struct nand_device *dev, void *data)
+{
+	dev->controller_priv = data;
+}
+
+static inline void *nand_get_ctrldata(struct nand_device *dev)
+{
+	return dev->controller_priv;
+}
+
+static inline struct nand_device *dev_to_nand(struct device *dev)
 {
 	return container_of(dev, struct nand_device, dev);
 }
 
-static struct nand_device *mtd_to_nand(struct mtd_info *mtd)
+static inline  struct nand_device *mtd_to_nand(struct mtd_info *mtd)
 {
 	return container_of(mtd, struct nand_device, mtd);
 }
@@ -290,3 +320,10 @@ static inline void nand_controller_set_devdata(struct nand_controller *ctrl,
 }
 
 struct nand_controller *nand_controller_alloc(struct device *dev, unsigned size);
+
+int nand_controller_register(struct nand_controller *ctrl);
+
+int nand_controller_unregister(struct nand_controller *ctrl);
+
+int nand_basic_launch_seq(struct nand_device *dev,
+			  const struct nand_operation_seq *seq);
