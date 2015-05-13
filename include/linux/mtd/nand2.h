@@ -18,7 +18,7 @@ struct nand_operation {
 	u8 cmds[2];
 	u8 naddrs;
 	u8 addrs[5];
-	bool wait_ready;
+	bool waitready;
 	int page;
 	int column;
 	enum nand_operation_dir dir;
@@ -32,7 +32,8 @@ struct nand_operation {
 	unsigned long timeout;
 	bool eightbitmode;
 
-	void (*complete)(struct nand_operation *op, int result);
+	void (*complete)(struct nand_operation *op);
+	int result;
 	void *priv;
 };
 
@@ -46,11 +47,9 @@ struct nand_controller_ops {
 	void (*cleanup)(struct nand_device *dev);
 	int (*add)(struct nand_device *dev);
 	int (*remove)(struct nand_device *dev);
-	void (*select)(struct nand_device *dev, int chip);
-	int (*launch_op)(struct nand_device *dev,
-		         const struct nand_operation *op);
-	int (*launch_seq)(struct nand_device *dev,
-			  const struct nand_operation_seq *seq);
+	int (*queue_op)(struct nand_operation *op);
+	int (*queue_seq)(struct nand_operation_seq *seq);
+	int (*launch_op)(struct nand_operation *op);
 	int (*apply_timings)(struct nand_device *dev);
 	bool (*supported)(struct nand_controller *controller,
 			  const struct nand_operation *op);
@@ -64,24 +63,26 @@ struct nand_devices {
 struct nand_controller {
 	struct list_head node;
 	struct device dev;
-	struct mutex lock;
+	spinlock_t lock;
 	struct nand_device *active;
 	wait_queue_head_t wq;
 	const struct nand_controller_ops *ops;
+	struct list_head queue;
+	struct nand_operation *cur;
 	struct nand_devices devices;
 	int numcs;
 };
 
 struct nand_basic_controller_ops {
-	void (*write_buf)(struct nand_device *dev, const void *buf, int len);
-	void (*read_buf)(struct nand_device *dev, void *buf, int len);
-	void (*cmd_ctrl)(struct nand_device *dev, int dat, unsigned int ctrl);
-	int (*waitfunc)(struct nand_device *dev);
+	int (*launch_op)(struct nand_device *dev,
+		         const struct nand_operation *op);
 };
 
 struct nand_basic_controller {
 	struct nand_controller base;
 	struct nand_basic_controller_ops *ops;
+	struct list_head queue;
+	spinlock_t lock;
 };
 
 struct nand_driver {
@@ -252,8 +253,13 @@ struct nand_device {
 	struct list_head node;
 	struct device dev;
 	struct mtd_info mtd;
-
 	u8 id[2];
+
+	int numchips;
+	u64 chipsize;
+	u8 bits_per_cell;
+
+	/*
 	unsigned int options;
 	unsigned int bbt_options;
 
@@ -268,6 +274,7 @@ struct nand_device {
 	unsigned int pagebuf_bitflips;
 	int subpagesize;
 	u8 bits_per_cell;
+	*/
 
 	struct nand_hw_interface hw_interface;
 	struct nand_sw_interface sw_interface;
@@ -287,6 +294,12 @@ struct nand_device {
 
 	void *priv;
 };
+
+static inline int nand_onfi_feature(struct nand_device *dev)
+{
+	return dev->sw_interface.type == NAND_ONFI ?
+	       le16_to_cpu(dev->sw_interface.onfi.params.features) : 0;
+}
 
 static inline void nand_set_ctrldata(struct nand_device *dev, void *data)
 {
@@ -327,3 +340,10 @@ int nand_controller_unregister(struct nand_controller *ctrl);
 
 int nand_basic_launch_seq(struct nand_device *dev,
 			  const struct nand_operation_seq *seq);
+
+static inline int nand_controller_exec_op_async(struct nand_operation *op)
+{
+	return op->dev->controller->ops->queue_op(op);
+}
+
+int nand_controller_exec_op_sync(struct nand_operation *op);

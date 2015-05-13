@@ -29,7 +29,7 @@ int nand_basic_launch(struct nand_device *dev, const struct nand_operation *op)
 	if (op->dir == NAND_OP_OUTPUT && op->data[0].out)
 		ctrl->ops->write_buf(dev, op->data[0].out, op->len[0]);
 
-	if (op->wait_ready[0]) {
+	if (op->waitready[0]) {
 		ret = ctrl->ops->waitfunc(dev);
 		if (ret)
 			return ret;
@@ -42,7 +42,7 @@ int nand_basic_launch(struct nand_device *dev, const struct nand_operation *op)
 				    NAND_NCE | NAND_CTRL_CHANGE);
 	}
 
-	if (op->wait_ready[1]) {
+	if (op->waitready[1]) {
 		ret = ctrl->ops->waitfunc(dev);
 		if (ret)
 			return ret;
@@ -67,7 +67,7 @@ int nand_basic_launch(struct nand_device *dev, const struct nand_operation *op)
 	if (op->dir == NAND_OP_OUTPUT && op->data[1].out)
 		ctrl->ops->write_buf(dev, op->data[1].out, op->len[1]);
 
-	if (op->wait_ready[2]) {
+	if (op->waitready[2]) {
 		ret = ctrl->ops->waitfunc(dev);
 		if (ret)
 			return ret;

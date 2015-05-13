@@ -26,7 +26,7 @@ void nand_op_read_large_page(struct nand_operation *op,
 	nand_operation_init(op, dev, chip);
 
 	/* Adjust columns for 16 bit buswidth */
-	if (dev->options & NAND_BUSWIDTH_16)
+	if (dev->hw_interface.buswidth == 16)
 		column >>= 1;
 
 	op->ncmds = 2;
@@ -42,7 +42,7 @@ void nand_op_read_large_page(struct nand_operation *op,
 		op->naddrs++;
 	}
 
-	op->wait_ready = true;
+	op->waitready = true;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -55,7 +55,7 @@ void nand_op_read_small_page(struct nand_operation *op,
 	nand_operation_init(op, dev, chip);
 
 	/* Adjust columns for 16 bit buswidth */
-	if (dev->options & NAND_BUSWIDTH_16)
+	if (dev->hw_interface.buswidth == 16)
 		column >>= 1;
 
 	op->ncmds = 1;
@@ -75,7 +75,7 @@ void nand_op_read_small_page(struct nand_operation *op,
 		op->naddrs++;
 	}
 
-	op->wait_ready = true;
+	op->waitready = true;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -89,7 +89,7 @@ void nand_op_rnd_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_READCACHE;
-	op->wait_ready = true;
+	op->waitready = true;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -103,7 +103,7 @@ void nand_op_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_READCACHE;
-	op->wait_ready = true;
+	op->waitready = true;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -117,7 +117,7 @@ void nand_op_last_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_LASTREADCACHE;
-	op->wait_ready = true;
+	op->waitready = true;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -130,16 +130,16 @@ static int nand_raw_read_cached(struct nand_device *dev, int page, int column,
 	struct nand_operation op;
 	int chipnr, ret;
 
-	chipnr = (int)(page >> (dev->chip_shift - dev->page_shift));
+	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
 
 	if (len < dev->mtd.writesize - column) {
 		nand_op_read_large_page(&op, dev, chipnr, page,
 					column, buf, len);
-		return dev->controller->ops->launch_op(dev, &op);
+		return nand_controller_exec_op_sync(&op);
 	}
 
 	nand_op_read_large_page(&op, dev, chipnr, page, column, NULL, 0);
-	ret = dev->controller->ops->launch_op(dev, &op);
+	ret = nand_controller_exec_op_sync(&op);
 	if (ret)
 		return ret;
 
@@ -153,7 +153,7 @@ static int nand_raw_read_cached(struct nand_device *dev, int page, int column,
 		else
 			nand_op_last_read_cache(&op, dev, chipnr, buf, len);
 
-		ret = dev->controller->ops->launch_op(dev, &op);
+		ret = nand_controller_exec_op_sync(&op);
 		if (ret)
 			return ret;
 
@@ -171,8 +171,7 @@ static int nand_basic_ecc_read(struct nand_device *dev, int page, int column,
 //	struct nand_operation op;
 	int chipnr;
 
-	chipnr = (int)(page >> (dev->chip_shift - dev->page_shift));
-	dev->controller->ops->select(dev, chipnr);
+	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
 
 	ecc_ctrl->ops->enable(dev);
 	while (1) {
@@ -199,13 +198,49 @@ static void nand_op_readid(struct nand_operation *op,
 	op->eightbitmode = true;
 }
 
+static void nand_op_read_param(struct nand_operation *op,
+			       struct nand_device *dev, int chip,
+			       u8 addr, void *buf, size_t len)
+{
+	nand_operation_init(op, dev, chip);
+
+	op->ncmds = 1;
+	op->cmds[0] = NAND_CMD_PARAM;
+	op->naddrs = 1;
+	op->addrs[0] = addr;
+	op->dir = NAND_OP_INPUT;
+	op->waitready = true;
+	op->data.len = len;
+	op->data.in = buf;
+	op->eightbitmode = true;
+}
+
+static void nand_op_rnd_read(struct nand_operation *op,
+			     struct nand_device *dev, int chip,
+			     int column, void *buf, size_t len)
+{
+	nand_operation_init(op, dev, chip);
+
+	op->ncmds = 2;
+	op->cmds[0] = NAND_CMD_RNDOUT;
+	op->cmds[1] = NAND_CMD_RNDOUTSTART;
+	op->naddrs = 2;
+	op->addrs[0] = column;
+	op->addrs[1] = column >> 8;
+	op->dir = NAND_OP_INPUT;
+	op->data.len = len;
+	op->data.in = buf;
+	op->eightbitmode = true;
+}
+
+/*
 int nand_basic_launch_seq(struct nand_device *dev,
 			  const struct nand_operation_seq *seq)
 {
 	int ret, i;
 
 	for (i = 0; i < seq->nops; i++) {
-		ret = dev->controller->ops->launch_op(dev, &seq->ops[i]);
+		ret = dev->controller->ops->queue_op(dev, &seq->ops[i]);
 		if (ret)
 			return ret;
 	}
@@ -213,6 +248,70 @@ int nand_basic_launch_seq(struct nand_device *dev,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nand_basic_launch_seq);
+*/
+
+int nand_controller_queue_op(struct nand_operation *op)
+{
+	struct nand_controller *ctrl = op->dev->controller;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ctrl->lock, flags);
+	list_add_tail(&op->node, &ctrl->queue);
+	if (!ctrl->cur)
+		ctrl->cur = op;
+	else
+		op = NULL;
+	spin_unlock_irqrestore(&ctrl->lock, flags);
+
+	if (!op)
+		return 0;
+
+	return ctrl->ops->launch_op(op);
+}
+EXPORT_SYMBOL_GPL(nand_controller_queue_op);
+
+int nand_controller_queue_seq(struct nand_operation_seq *seq)
+{
+	struct nand_controller *ctrl = seq->ops[0].dev->controller;
+	struct nand_operation *op = NULL;
+	unsigned long flags;
+	int i;
+
+	spin_lock_irqsave(&ctrl->lock, flags);
+	for (i = 0; i < seq->nops; i++)
+		list_add_tail(&seq->ops[i].node, &ctrl->queue);
+
+	if (!ctrl->cur) {
+		ctrl->cur = &seq->ops[0];
+		op = ctrl->cur;
+	}
+	spin_unlock_irqrestore(&ctrl->lock, flags);
+
+	if (!op)
+		return 0;
+
+	return ctrl->ops->launch_op(op);
+}
+EXPORT_SYMBOL_GPL(nand_controller_queue_seq);
+
+static void nand_controller_op_complete(struct nand_operation *op)
+{
+	struct completion *comp = op->priv;
+
+	complete(comp);
+}
+
+int nand_controller_exec_op_sync(struct nand_operation *op)
+{
+	DECLARE_COMPLETION_ONSTACK(comp);
+
+	op->complete = nand_controller_op_complete;
+	op->priv = &comp;
+	nand_controller_exec_op_async(op);
+	wait_for_completion(&comp);
+
+	return op->result;
+}
 
 static ssize_t
 modalias_show(struct device *dev, struct device_attribute *a, char *buf)
@@ -271,23 +370,84 @@ static int nand_apply_conservative_timings(struct nand_device *dev)
 	return dev->controller->ops->apply_timings(dev);
 }
 
+static u16 nand_onfi_crc16(const void *buf, size_t len)
+{
+	const u8 *p = buf;
+	u16 crc = 0x4F4E;
+	int i;
+
+	while (len--) {
+		crc ^= *p++ << 8;
+		for (i = 0; i < 8; i++)
+			crc = (crc << 1) ^ ((crc & 0x8000) ? 0x8005 : 0);
+	}
+
+	return crc;
+}
+
 static int nand_onfi_init(struct nand_device *dev)
 {
+	struct nand_onfi_params *params = &dev->sw_interface.onfi.params;
 	size_t len = dev->hw_interface.buswidth == 16 ? 4 : 2;
-	struct nand_controller *ctrl = dev->controller;
 	struct nand_operation op;
+	int ret, i;
 	u8 id[4];
-	int ret;
 
 	nand_op_readid(&op, dev, 0, 0x20, id, len);
-	ret = ctrl->ops->launch_op(dev, &op);
+	ret = nand_controller_exec_op_sync(&op);
 	if (ret)
 		return ret;
 
 	if (memcmp(id, "ONFI", sizeof("ONFI")))
 		return -ENOTSUPP;
 
-	nand_op_readid(&op, dev, 0, 0x20, id, len);
+	for (i = 0; i < 3; i++) {
+		u16 crc;
+
+		if (!i)
+			nand_op_read_param(&op, dev, 0, 0x0,
+					   params, sizeof(*params));
+		else
+			nand_op_rnd_read(&op, dev, 0, i * sizeof(*params),
+					 params, sizeof(*params));
+
+		ret = nand_controller_exec_op_sync(&op);
+		if (ret)
+			return ret;
+
+		crc = nand_onfi_crc16(params, sizeof(params) - 2);
+		if (crc == le16_to_cpu(params->crc))
+			break;
+	}
+
+	if (i == 3)
+		return -ENOTSUPP;
+
+	dev->mtd.erasesize = 1 << (fls(le32_to_cpu(params->pages_per_block)) - 1);
+	dev->mtd.erasesize *= dev->mtd.writesize;
+
+	dev->mtd.oobsize = le16_to_cpu(params->spare_bytes_per_page);
+
+	/* See erasesize comment */
+	dev->chipsize = 1 << (fls(le32_to_cpu(params->blocks_per_lun)) - 1);
+	dev->chipsize *= (u64)dev->mtd.erasesize * params->lun_count;
+	dev->bits_per_cell = params->bits_per_cell;
+
+	if (nand_onfi_feature(dev) & ONFI_FEATURE_16_BIT_BUS)
+		dev->hw_interface.buswidth = 16;
+	else
+		dev->hw_interface.buswidth = 8;
+
+	if (params->ecc_bits != 0xff) {
+		dev->ecc.requirements.strength = params->ecc_bits;
+		dev->ecc.requirements.step = 512;
+	} else if ((nand_onfi_feature(dev) & ONFI_FEATURE_EXT_PARAM_PAGE)) {
+//		/* The Extended Parameter Page is supported since ONFI 2.1. */
+//		if (nand_flash_detect_ext_param_page(mtd, chip, p))
+//			pr_warn("Failed to detect ONFI extended param page\n");
+	} else {
+		pr_warn("Could not retrieve ONFI ECC requirements\n");
+	}
 
 	return 0;
 }
@@ -320,7 +480,7 @@ int nand_device_add(struct nand_device *dev)
 
 	for (i = 0; i < ctrl->numcs; i++) {
 		nand_op_readid(&op, dev, i, 0x00, id, len);
-		ret = ctrl->ops->launch_op(dev, &op);
+		ret = nand_controller_exec_op_sync(&op);
 		if (ret)
 			goto err_cleanup;
 
@@ -530,9 +690,9 @@ int nand_controller_register(struct nand_controller *ctrl)
 		return -EINVAL;
 
 	if (!ctrl->ops ||
-	    !ctrl->ops->apply_timings || !ctrl->ops->launch_op ||
-	    !ctrl->ops->launch_seq)
-	mutex_init(&ctrl->lock);
+	    !ctrl->ops->apply_timings || !ctrl->ops->queue_op ||
+	    !ctrl->ops->queue_seq)
+	spin_lock_init(&ctrl->lock);
 	init_waitqueue_head(&ctrl->wq);
 	ctrl->active = NULL;
 	INIT_LIST_HEAD(&ctrl->devices.list);

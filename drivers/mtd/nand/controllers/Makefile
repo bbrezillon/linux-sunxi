@@ -1,0 +1,1 @@
+obj-$(CONFIG_MTD_NAND_SUNXI)		+= sunxi.o
