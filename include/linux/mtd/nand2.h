@@ -4,21 +4,51 @@ struct nand_device;
 struct nand_controller;
 struct nand_ecc_controller;
 
-enum nand_operation_dir {
-	NAND_OP_NONE,
-	NAND_OP_INPUT,
-	NAND_OP_OUTPUT,
+enum nand_action_type {
+	NAND_OP_ACTION,
+	NAND_PRIV_ACTION,
 };
 
-struct nand_operation {
+enum nand_action_state {
+	NAND_ACTION_CREATED,
+	NAND_ACTION_EXECUTED,
+	NAND_ACTION_WAITING,
+	NAND_ACTION_DONE,
+};
+
+struct nand_action {
 	struct list_head node;
-	struct nand_device *dev;
-	int chip;
+	enum nand_action_type type;
+	int status;
+};
+
+//enum nand_operation_dir {
+//	NAND_OP_NONE,
+//	NAND_OP_INPUT,
+//	NAND_OP_OUTPUT,
+//};
+
+#define NAND_OP_DIR_MSK		GENMASK(1, 0)
+#define NAND_OP_NO_DATA		(0 << 0)
+#define NAND_OP_INPUT		(1 << 0)
+#define NAND_OP_OUTPUT		(2 << 0)
+#define NAND_OP_WAIT_RDY_MSK	GENMASK(3, 2)
+#define NAND_OP_DO_NOT_WAIT	(0 << 2)
+#define NAND_OP_WAIT_LUN_RDY	(1 << 2)
+#define NAND_OP_WAIT_DEV_RDY	(2 << 2)
+#define NAND_OP_8BIT_MODE	BIT(4)
+
+struct nand_operation {
+	struct nand_action action;
+//	struct list_head node;
+//	struct nand_device *dev;
+//	int chip;
+	u32 flags;
 	u8 ncmds;
 	u8 cmds[2];
 	u8 naddrs;
 	u8 addrs[5];
-	bool waitready;
+//	bool waitready;
 	int page;
 	int column;
 	enum nand_operation_dir dir;
@@ -30,16 +60,27 @@ struct nand_operation {
 		size_t len;
 	} data;
 	unsigned long timeout;
-	bool eightbitmode;
+//	bool eightbitmode;
 
-	void (*complete)(struct nand_operation *op);
-	int result;
-	void *priv;
+//	void (*complete)(struct nand_operation *op);
+//	int result;
+//	void *priv;
 };
 
-struct nand_operation_seq {
-	int nops;
-	struct nand_operation *ops;
+struct nand_priv_action {
+	struct nand_action action;
+	int (*func)(struct nand_priv_action *action);
+};
+
+struct nand_action_seq {
+	struct list_head node;
+	struct list_head actions;
+	struct nand_device *dev;
+	int die;
+	struct nand_action *cur;
+	void *priv;
+//	int nops;
+//	struct nand_operation *ops;
 };
 
 struct nand_controller_ops {
@@ -47,9 +88,10 @@ struct nand_controller_ops {
 	void (*cleanup)(struct nand_device *dev);
 	int (*add)(struct nand_device *dev);
 	int (*remove)(struct nand_device *dev);
-	int (*queue_op)(struct nand_operation *op);
-	int (*queue_seq)(struct nand_operation_seq *seq);
-	int (*launch_op)(struct nand_operation *op);
+	int (*queue)(struct nand_action_seq *seq);
+//	int (*queue_op)(struct nand_operation *op);
+//	int (*queue_seq)(struct nand_operation_seq *seq);
+//	int (*launch_op)(struct nand_operation *op);
 	int (*apply_timings)(struct nand_device *dev);
 	bool (*supported)(struct nand_controller *controller,
 			  const struct nand_operation *op);
@@ -222,9 +264,35 @@ struct nand_bad_block {
 	struct nand_bbt_descr *badblock_pattern;
 };
 
+enum nand_cs_type {
+	NAND_CS_GPIO,
+	NAND_CS_PRIV,
+};
+
 struct nand_cs {
-	int num;
-	int *ids;
+	enum nand_cs_type type;
+	int id;
+	union {
+		struct gpio_desc *gpio;
+		void *data;
+	};
+	int nusers;
+};
+
+enum nand_rb_type {
+	NAND_RB_NONE,
+	NAND_RB_GPIO,
+	NAND_RB_PRIV,
+};
+
+struct nand_rb {
+	enum nand_rb_type type;
+	int id;
+	union {
+		struct gpio_desc *gpio;
+		void *data;
+	};
+	int nusers;
 };
 
 enum nand_hw_interface_type {
@@ -232,7 +300,6 @@ enum nand_hw_interface_type {
 };
 
 struct nand_hw_interface {
-	struct nand_cs cs;
 	int buswidth;
 	enum nand_hw_interface_type type;
 	union {
@@ -240,13 +307,29 @@ struct nand_hw_interface {
 	} timings;
 };
 
+enum nand_die_type {
+	NAND_CS_DIE,
+	NAND_LUN_DIE
+};
+
+struct nand_die {
+	enum nand_die_type type;
+	struct list_head queue;
+	struct action_seq *cur;
+	struct nand_cs *cs;
+	struct nand_rb *rb;
+};
+
 struct nand_layout {
 	int page_shift;
 	int phys_erase_shift;
 	int bbt_erase_shift;
-	int chip_shift;
-	u64 chipsize;
 	int pagemask;
+
+	int die_size;
+	int die_shift;
+	int ndies;
+	struct nand_die *dies;
 };
 
 struct nand_device {
@@ -255,8 +338,9 @@ struct nand_device {
 	struct mtd_info mtd;
 	u8 id[2];
 
-	int numchips;
-	u64 chipsize;
+	u64 size;
+	struct nand_layout layout;
+
 	u8 bits_per_cell;
 
 	/*
@@ -341,9 +425,17 @@ int nand_controller_unregister(struct nand_controller *ctrl);
 int nand_basic_launch_seq(struct nand_device *dev,
 			  const struct nand_operation_seq *seq);
 
-static inline int nand_controller_exec_op_async(struct nand_operation *op)
-{
-	return op->dev->controller->ops->queue_op(op);
-}
+//static inline int nand_controller_exec_op_async(struct nand_operation *op)
+//{
+//	return op->dev->controller->ops->queue_op(op);
+//}
+//
+//int nand_controller_exec_op_sync(struct nand_operation *op);
 
-int nand_controller_exec_op_sync(struct nand_operation *op);
+static inline void nand_action_seq_init(struct nand_action_seq *seq,
+					struct nand_device *dev, int die)
+{
+	INIT_LIST_HEAD(&seq->actions);
+	seq->dev = dev;
+	seq->die = die;
+}

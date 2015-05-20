@@ -10,14 +10,14 @@ static DEFINE_MUTEX(lock);
 //static LIST_HEAD(manufacturers);
 //static DEFINE_MUTEX(lock);
 
-static inline void nand_operation_init(struct nand_operation *op,
-				       struct nand_device *dev, int chip)
-{
-	memset(op, 0, sizeof(op));
-	op->dev = dev;
-	op->chip = chip;
-
-}
+//static inline void nand_operation_init(struct nand_operation *op,
+//				       struct nand_device *dev, int die)
+//{
+//	memset(op, 0, sizeof(op));
+//	op->dev = dev;
+//	op->chip = chip;
+//
+//}
 
 void nand_op_read_large_page(struct nand_operation *op,
 			     struct nand_device *dev, int chip,
@@ -42,7 +42,7 @@ void nand_op_read_large_page(struct nand_operation *op,
 		op->naddrs++;
 	}
 
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_LUN_RDY;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -75,7 +75,7 @@ void nand_op_read_small_page(struct nand_operation *op,
 		op->naddrs++;
 	}
 
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_LUN_RDY;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -89,7 +89,7 @@ void nand_op_rnd_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_READCACHE;
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_LUN_RDY;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -103,7 +103,7 @@ void nand_op_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_READCACHE;
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_LUN_RDY;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
@@ -117,70 +117,70 @@ void nand_op_last_read_cache(struct nand_operation *op,
 
 	op->ncmds = 1;
 	op->cmds[0] = NAND_CMD_LASTREADCACHE;
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_LUN_RDY;
 	op->dir = NAND_OP_INPUT;
 	op->data.in = buf;
 	op->data.len = len;
 }
 
-static int nand_raw_read_cached(struct nand_device *dev, int page, int column,
-				void *buf, size_t len)
-{
-	size_t chunksize, remains;
-	struct nand_operation op;
-	int chipnr, ret;
-
-	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
-
-	if (len < dev->mtd.writesize - column) {
-		nand_op_read_large_page(&op, dev, chipnr, page,
-					column, buf, len);
-		return nand_controller_exec_op_sync(&op);
-	}
-
-	nand_op_read_large_page(&op, dev, chipnr, page, column, NULL, 0);
-	ret = nand_controller_exec_op_sync(&op);
-	if (ret)
-		return ret;
-
-	for (remains = len; remains; buf += chunksize) {
-		chunksize = remains < (dev->mtd.writesize - column) ?
-			    remains : (dev->mtd.writesize - column);
-		remains -= chunksize;
-
-		if (remains <= dev->mtd.writesize)
-			nand_op_read_cache(&op, dev, chipnr, buf, len);
-		else
-			nand_op_last_read_cache(&op, dev, chipnr, buf, len);
-
-		ret = nand_controller_exec_op_sync(&op);
-		if (ret)
-			return ret;
-
-		column = 0;
-	}
-
-	return 0;
-}
-
-static int nand_basic_ecc_read(struct nand_device *dev, int page, int column,
-			       void *buf, size_t len)
-{
-	struct nand_basic_ecc_controller *ecc_ctrl =
-			to_basic_ecc_controller(dev->ecc.desc->controller);
+//static int nand_raw_read_cached(struct nand_device *dev, int page, int column,
+//				void *buf, size_t len)
+//{
+//	size_t chunksize, remains;
 //	struct nand_operation op;
-	int chipnr;
-
-	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
-
-	ecc_ctrl->ops->enable(dev);
-	while (1) {
-
-	}
-	ecc_ctrl->ops->disable(dev);
-
-	return 0;
-}
+//	int chipnr, ret;
+//
+//	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
+//
+//	if (len < dev->mtd.writesize - column) {
+//		nand_op_read_large_page(&op, dev, chipnr, page,
+//					column, buf, len);
+//		return nand_controller_exec_op_sync(&op);
+//	}
+//
+//	nand_op_read_large_page(&op, dev, chipnr, page, column, NULL, 0);
+//	ret = nand_controller_exec_op_sync(&op);
+//	if (ret)
+//		return ret;
+//
+//	for (remains = len; remains; buf += chunksize) {
+//		chunksize = remains < (dev->mtd.writesize - column) ?
+//			    remains : (dev->mtd.writesize - column);
+//		remains -= chunksize;
+//
+//		if (remains <= dev->mtd.writesize)
+//			nand_op_read_cache(&op, dev, chipnr, buf, len);
+//		else
+//			nand_op_last_read_cache(&op, dev, chipnr, buf, len);
+//
+//		ret = nand_controller_exec_op_sync(&op);
+//		if (ret)
+//			return ret;
+//
+//		column = 0;
+//	}
+//
+//	return 0;
+//}
+//
+//static int nand_basic_ecc_read(struct nand_device *dev, int page, int column,
+//			       void *buf, size_t len)
+//{
+//	struct nand_basic_ecc_controller *ecc_ctrl =
+//			to_basic_ecc_controller(dev->ecc.desc->controller);
+////	struct nand_operation op;
+//	int chipnr;
+//
+//	chipnr = (page * dev->mtd.writesize) / dev->chipsize;
+//
+//	ecc_ctrl->ops->enable(dev);
+//	while (1) {
+//
+//	}
+//	ecc_ctrl->ops->disable(dev);
+//
+//	return 0;
+//}
 
 static void nand_op_readid(struct nand_operation *op,
 			   struct nand_device *dev, int chip,
@@ -195,7 +195,7 @@ static void nand_op_readid(struct nand_operation *op,
 	op->dir = NAND_OP_INPUT;
 	op->data.len = len;
 	op->data.in = buf;
-	op->eightbitmode = true;
+	op->flags = NAND_OP_8BIT_MODE;
 }
 
 static void nand_op_read_param(struct nand_operation *op,
@@ -209,10 +209,10 @@ static void nand_op_read_param(struct nand_operation *op,
 	op->naddrs = 1;
 	op->addrs[0] = addr;
 	op->dir = NAND_OP_INPUT;
-	op->waitready = true;
+	op->flags = NAND_OP_WAIT_DEV_RDY;
 	op->data.len = len;
 	op->data.in = buf;
-	op->eightbitmode = true;
+	op->flags = NAND_OP_8BIT_MODE;
 }
 
 static void nand_op_rnd_read(struct nand_operation *op,
@@ -230,7 +230,7 @@ static void nand_op_rnd_read(struct nand_operation *op,
 	op->dir = NAND_OP_INPUT;
 	op->data.len = len;
 	op->data.in = buf;
-	op->eightbitmode = true;
+	op->flags = NAND_OP_8BIT_MODE;
 }
 
 /*
@@ -250,68 +250,68 @@ int nand_basic_launch_seq(struct nand_device *dev,
 EXPORT_SYMBOL_GPL(nand_basic_launch_seq);
 */
 
-int nand_controller_queue_op(struct nand_operation *op)
-{
-	struct nand_controller *ctrl = op->dev->controller;
-	unsigned long flags;
-
-	spin_lock_irqsave(&ctrl->lock, flags);
-	list_add_tail(&op->node, &ctrl->queue);
-	if (!ctrl->cur)
-		ctrl->cur = op;
-	else
-		op = NULL;
-	spin_unlock_irqrestore(&ctrl->lock, flags);
-
-	if (!op)
-		return 0;
-
-	return ctrl->ops->launch_op(op);
-}
-EXPORT_SYMBOL_GPL(nand_controller_queue_op);
-
-int nand_controller_queue_seq(struct nand_operation_seq *seq)
-{
-	struct nand_controller *ctrl = seq->ops[0].dev->controller;
-	struct nand_operation *op = NULL;
-	unsigned long flags;
-	int i;
-
-	spin_lock_irqsave(&ctrl->lock, flags);
-	for (i = 0; i < seq->nops; i++)
-		list_add_tail(&seq->ops[i].node, &ctrl->queue);
-
-	if (!ctrl->cur) {
-		ctrl->cur = &seq->ops[0];
-		op = ctrl->cur;
-	}
-	spin_unlock_irqrestore(&ctrl->lock, flags);
-
-	if (!op)
-		return 0;
-
-	return ctrl->ops->launch_op(op);
-}
-EXPORT_SYMBOL_GPL(nand_controller_queue_seq);
-
-static void nand_controller_op_complete(struct nand_operation *op)
-{
-	struct completion *comp = op->priv;
-
-	complete(comp);
-}
-
-int nand_controller_exec_op_sync(struct nand_operation *op)
-{
-	DECLARE_COMPLETION_ONSTACK(comp);
-
-	op->complete = nand_controller_op_complete;
-	op->priv = &comp;
-	nand_controller_exec_op_async(op);
-	wait_for_completion(&comp);
-
-	return op->result;
-}
+//int nand_controller_queue_op(struct nand_operation *op)
+//{
+//	struct nand_controller *ctrl = op->dev->controller;
+//	unsigned long flags;
+//
+//	spin_lock_irqsave(&ctrl->lock, flags);
+//	list_add_tail(&op->node, &ctrl->queue);
+//	if (!ctrl->cur)
+//		ctrl->cur = op;
+//	else
+//		op = NULL;
+//	spin_unlock_irqrestore(&ctrl->lock, flags);
+//
+//	if (!op)
+//		return 0;
+//
+//	return ctrl->ops->launch_op(op);
+//}
+//EXPORT_SYMBOL_GPL(nand_controller_queue_op);
+//
+//int nand_controller_queue_seq(struct nand_operation_seq *seq)
+//{
+//	struct nand_controller *ctrl = seq->ops[0].dev->controller;
+//	struct nand_operation *op = NULL;
+//	unsigned long flags;
+//	int i;
+//
+//	spin_lock_irqsave(&ctrl->lock, flags);
+//	for (i = 0; i < seq->nops; i++)
+//		list_add_tail(&seq->ops[i].node, &ctrl->queue);
+//
+//	if (!ctrl->cur) {
+//		ctrl->cur = &seq->ops[0];
+//		op = ctrl->cur;
+//	}
+//	spin_unlock_irqrestore(&ctrl->lock, flags);
+//
+//	if (!op)
+//		return 0;
+//
+//	return ctrl->ops->launch_op(op);
+//}
+//EXPORT_SYMBOL_GPL(nand_controller_queue_seq);
+//
+//static void nand_controller_op_complete(struct nand_operation *op)
+//{
+//	struct completion *comp = op->priv;
+//
+//	complete(comp);
+//}
+//
+//int nand_controller_exec_op_sync(struct nand_operation *op)
+//{
+//	DECLARE_COMPLETION_ONSTACK(comp);
+//
+//	op->complete = nand_controller_op_complete;
+//	op->priv = &comp;
+//	nand_controller_exec_op_async(op);
+//	wait_for_completion(&comp);
+//
+//	return op->result;
+//}
 
 static ssize_t
 modalias_show(struct device *dev, struct device_attribute *a, char *buf)
@@ -429,8 +429,8 @@ static int nand_onfi_init(struct nand_device *dev)
 	dev->mtd.oobsize = le16_to_cpu(params->spare_bytes_per_page);
 
 	/* See erasesize comment */
-	dev->chipsize = 1 << (fls(le32_to_cpu(params->blocks_per_lun)) - 1);
-	dev->chipsize *= (u64)dev->mtd.erasesize * params->lun_count;
+	dev->size = 1 << (fls(le32_to_cpu(params->blocks_per_lun)) - 1);
+	dev->size *= (u64)dev->mtd.erasesize * params->lun_count;
 	dev->bits_per_cell = params->bits_per_cell;
 
 	if (nand_onfi_feature(dev) & ONFI_FEATURE_16_BIT_BUS)
