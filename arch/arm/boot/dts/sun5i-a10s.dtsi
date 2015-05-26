@@ -243,6 +243,20 @@
 		allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
 	};
 
+	nand_cs2_pins_a: nand_cs@2 {
+		allwinner,pins = "PC17";
+		allwinner,function = "nand0";
+		allwinner,drive = <0>;
+		allwinner,pull = <0>;
+	};
+
+	nand_cs3_pins_a: nand_cs@3 {
+		allwinner,pins = "PC18";
+		allwinner,function = "nand0";
+		allwinner,drive = <0>;
+		allwinner,pull = <0>;
+	};
+
 	spi2_pins_a: spi2@0 {
 		allwinner,pins = "PB12", "PB13", "PB14";
 		allwinner,function = "spi2";
