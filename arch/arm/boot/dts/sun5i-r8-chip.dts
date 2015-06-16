@@ -94,6 +94,10 @@
 	};
 };
 
+&ehci0 {
+	status = "okay";
+};
+
 &i2c0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c0_pins_a>;
@@ -162,8 +166,17 @@
 	};
 };
 
+&ohci0 {
+	status = "okay";
+};
+
 &uart1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1_pins_b>;
+	status = "okay";
+};
+
+&usbphy {
+	usb1_vbus-supply = <&vcc_5v0>;
 	status = "okay";
 };
