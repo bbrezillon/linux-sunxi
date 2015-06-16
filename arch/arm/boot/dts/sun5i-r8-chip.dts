@@ -50,11 +50,115 @@
 	compatible = "nextthing,chip", "allwinner,sun5i-r8";
 
 	aliases {
+		i2c0 = &i2c0;
 		serial0 = &uart1;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+	};
+
+	dram_vcc: dram_vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "dram-vcc";
+		regulator-min-microvolt = <1600000>;
+		regulator-max-microvolt = <1600000>;
+		vin-supply = <&ipsout>;
+		regulator-always-on;
+	};
+
+	ipsout: ipsout {
+		compatible = "regulator-fixed";
+		regulator-name = "ipsout";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+
+	vcc_3v3: vcc3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc-3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&ipsout>;
+		regulator-always-on;
+	};
+
+	vcc_5v0: vcc5v0 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc-5v0";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&ipsout>;
+		regulator-always-on;
+	};
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0_pins_a>;
+	status = "okay";
+
+	axp209: pmic@34 {
+		compatible = "x-powers,axp209";
+		reg = <0x34>;
+
+		/*
+		 * The interrupt is routed through the "External Fast
+                 * Interrupt Request" pin (ball G13 of the module)
+                 * directly to the main interrupt controller, without
+                 * any other controller interfering.
+		 */
+		interrupts = <0>;
+
+		interrupt-controller;
+		#interrupt-cells = <1>;
+
+		regulators {
+			vdd_cpu: dcdc2 {
+				regulator-min-microvolt = <1000000>;
+				regulator-max-microvolt = <1300000>;
+				regulator-name = "cpuvdd";
+				regulator-always-on;
+			};
+
+			vdd_core: dcdc3 {
+				regulator-min-microvolt = <1000000>;
+				regulator-max-microvolt = <1300000>;
+				regulator-name = "corevdd";
+				regulator-always-on;
+			};
+
+			vdd_rtc: ldo1 {
+				regulator-min-microvolt = <1300000>;
+				regulator-max-microvolt = <1300000>;
+				regulator-name = "rtcvdd";
+				regulator-always-on;
+			};
+
+			avcc: ldo2 {
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "avcc";
+				regulator-always-on;
+			};
+
+			/* LDO3 is unused */
+			ldo3 {
+				regulator-name = "ldo3";
+			};
+
+			/* LDO4 is unused */
+			ldo4 {
+				regulator-name = "ldo4";
+			};
+
+			vcc_1v8: ldo5 {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+				regulator-name = "vcc-1v8";
+			};
+		};
 	};
 };
 
