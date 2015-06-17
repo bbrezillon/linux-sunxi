@@ -45,12 +45,15 @@
 /dts-v1/;
 #include "sun5i-a13.dtsi"
 
+#include <dt-bindings/interrupt-controller/irq.h>
+
 / {
 	model = "NextThing C.H.I.P.";
 	compatible = "nextthing,chip", "allwinner,sun5i-r8";
 
 	aliases {
 		i2c0 = &i2c0;
+		i2c2 = &i2c2;
 		serial0 = &uart1;
 	};
 
@@ -163,6 +166,25 @@
 				regulator-name = "vcc-1v8";
 			};
 		};
+	};
+};
+
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_pins_a>;
+	status = "okay";
+
+	xio: gpio@38 {
+		compatible = "nxp,pcf8574a";
+		reg = <0x38>;
+
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		interrupt-parent = <&pio>;
+		interrupts = <6 0 IRQ_TYPE_EDGE_FALLING>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
 	};
 };
 
