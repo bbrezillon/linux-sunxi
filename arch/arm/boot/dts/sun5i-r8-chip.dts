@@ -53,6 +53,7 @@
 
 	aliases {
 		i2c0 = &i2c0;
+		i2c1 = &i2c1;
 		i2c2 = &i2c2;
 		serial0 = &uart1;
 	};
@@ -167,6 +168,16 @@
 			};
 		};
 	};
+};
+
+/*
+ * i2c1 is routed to the external pins and doesn't have any device
+ * attached to it on the C.H.I.P itself.
+ */
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins_a>;
+	status = "okay";
 };
 
 &i2c2 {
