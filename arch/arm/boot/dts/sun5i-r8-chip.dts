@@ -45,6 +45,7 @@
 /dts-v1/;
 #include "sun5i-a13.dtsi"
 
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 
 / {
@@ -77,6 +78,19 @@
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 		regulator-always-on;
+	};
+
+	usb0_vbus: usb0_vbus {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&chip_vbus_pin>;
+
+		regulator-name = "vbus-usb0";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_5v0>;
+		gpio = <&pio 1 10 GPIO_ACTIVE_HIGH>; /* PB10 */
+		enable-active-high;
 	};
 
 	vcc_3v3: vcc3v3 {
@@ -203,13 +217,44 @@
 	status = "okay";
 };
 
+&otg_sram {
+	status = "okay";
+};
+
+&pio {
+	chip_vbus_pin: chip_vbus_pin@0 {
+	        allwinner,pins = "PB10";
+	        allwinner,function = "gpio_out";
+	        allwinner,drive = <SUN4I_PINCTRL_10_MA>;
+	        allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
+	};
+
+	chip_id_det_pin: chip_id_det_pin@0 {
+	        allwinner,pins = "PG2";
+	        allwinner,function = "gpio_in";
+	        allwinner,drive = <SUN4I_PINCTRL_10_MA>;
+	        allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
+	};
+};
+
 &uart1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1_pins_b>;
 	status = "okay";
 };
 
-&usbphy {
-	usb1_vbus-supply = <&vcc_5v0>;
+&usb_otg {
+	dr_mode = "otg";
 	status = "okay";
+};
+
+&usbphy {
+	pinctrl-names = "default";
+	pinctrl-0 = <&chip_id_det_pin>;
+	status = "okay";
+
+	usb0_id_det-gpio = <&pio 6 2 GPIO_ACTIVE_HIGH>; /* PG2 */
+
+	usb0_vbus-supply = <&usb0_vbus>;
+	usb1_vbus-supply = <&vcc_5v0>;
 };
