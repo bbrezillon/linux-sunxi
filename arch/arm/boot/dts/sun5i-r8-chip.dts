@@ -57,6 +57,7 @@
 		i2c1 = &i2c1;
 		i2c2 = &i2c2;
 		serial0 = &uart1;
+		serial1 = &uart3;
 	};
 
 	chosen {
@@ -240,6 +241,13 @@
 &uart1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1_pins_b>;
+	status = "okay";
+};
+
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3_pins_a>,
+		    <&uart3_pins_cts_rts_a>;
 	status = "okay";
 };
 
