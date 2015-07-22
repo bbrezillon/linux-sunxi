@@ -64,6 +64,18 @@
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
+
+	wifi_reg_on: wifi_reg_on {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&chip_wifi_reg_on_pin>;
+
+		regulator-name = "wifi-reg-on";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&pio 2 19 GPIO_ACTIVE_HIGH>; /* PC19 */
+		enable-active-high;
+	};
 };
 
 &codec {
@@ -113,10 +125,14 @@
 	};
 };
 
+&mmc0_pins_a {
+	allwinner,pull = <SUN4I_PINCTRL_PULL_UP>;
+};
+
 &mmc0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc0_pins_a>;
-	vmmc-supply = <&reg_vcc3v3>;
+	vmmc-supply = <&wifi_reg_on>;
 	bus-width = <4>;
 	non-removable;
 	status = "okay";
@@ -136,6 +152,13 @@
 		allwinner,function = "gpio_out";
 		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
 		allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
+	};
+
+	chip_wifi_reg_on_pin: chip_wifi_reg_on_pin@0 {
+	        allwinner,pins = "PC19";
+	        allwinner,function = "gpio_out";
+	        allwinner,drive = <SUN4I_PINCTRL_10_MA>;
+	        allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
 	};
 
 	chip_id_det_pin: chip_id_det_pin@0 {
