@@ -175,6 +175,14 @@ static int h27q_get_best_val(const u8 *buf, int size, int min_cnt)
 #define H27Q_RR_TABLE_SIZE		784
 #define H27Q_RR_TABLE_NSETS		8
 
+static void h27q_set_slc_mode(struct mtd_info *mtd, bool enable)
+{
+	struct nand_chip *chip = mtd->priv;
+	u8 cmd = enable ? 0xbf : 0xbe;
+
+	chip->cmdfunc(mtd, cmd, -1, -1);
+}
+
 static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 {
 	struct nand_chip *chip = mtd->priv;
@@ -273,6 +281,7 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 	chip->setup_read_retry = nand_setup_read_retry_hynix;
 	chip->read_retries = total_rr_count;
 	chip->manuf_cleanup = h27_cleanup;
+	chip->set_slc_mode = h27q_set_slc_mode;
 
 	return 0;
 
