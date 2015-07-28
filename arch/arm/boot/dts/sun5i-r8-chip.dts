@@ -125,6 +125,13 @@
 	};
 };
 
+&codec {
+	routing =
+		"Headphone Jack", "HP Left",
+		"Headphone Jack", "HP Right";
+	status = "okay";
+};
+
 &ehci0 {
 	status = "okay";
 };
