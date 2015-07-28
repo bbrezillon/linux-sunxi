@@ -111,6 +111,8 @@ struct nand_ecclayout {
 
 struct module;	/* only needed for owner field in mtd_info */
 
+struct mtd_part_ops;
+
 struct mtd_info {
 	u_char type;
 	uint32_t flags;
@@ -235,6 +237,8 @@ struct mtd_info {
 	int (*_get_device) (struct mtd_info *mtd);
 	void (*_put_device) (struct mtd_info *mtd);
 
+	const struct mtd_part_ops *part_ops;
+
 	/* Backing device capabilities for this device
 	 * - provides mmap capabilities
 	 */
@@ -252,6 +256,41 @@ struct mtd_info {
 	struct module *owner;
 	struct device dev;
 	int usecount;
+};
+
+/* Our partition node structure */
+struct mtd_part {
+	struct mtd_info mtd;
+	struct mtd_info *master;
+	uint64_t offset;
+	struct list_head list;
+};
+
+static inline struct mtd_part *mtd_to_part(struct mtd_info *mtd)
+{
+	return container_of(mtd, struct mtd_part, mtd);
+}
+
+static inline void *mtd_part_get_priv(struct mtd_part *part)
+{
+	return part->mtd.priv;
+}
+
+static inline void mtd_part_set_priv(struct mtd_part *part, void *priv)
+{
+	part->mtd.priv = priv;
+}
+
+/**
+ * struct mtd_part_ops - MTD partition operations
+ * @add: add a new MTD partition and instantiate the associated data.
+ *	 You should overload the MTD callbacks if you want a specific
+ *	 behavior.
+ * @remove: remove an existing MTD partition
+ */
+struct mtd_part_ops {
+	int (*add)(struct mtd_part *part);
+	void (*remove)(struct mtd_part *part);
 };
 
 int mtd_erase(struct mtd_info *mtd, struct erase_info *instr);
