@@ -112,6 +112,14 @@
 		regulator-always-on;
 	};
 
+	/*
+	 * This is actually an active-low reset line for the WLAN
+	 * part of the WiFi/BT CHIP.
+	 *
+	 * Just like for LDO3 and LDO4, we cannot tie it to the DT
+	 * node of the SDIO device for now, as there is no bindings
+	 * for it, so we need to have this hack.
+	 */
 	wifi_reg_on: wifi_reg_on {
 		compatible = "regulator-fixed";
 		pinctrl-names = "default";
@@ -120,6 +128,7 @@
 		regulator-name = "wifi-reg-on";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
 		gpio = <&pio 2 19 GPIO_ACTIVE_HIGH>; /* PC19 */
 		enable-active-high;
 	};
@@ -185,14 +194,28 @@
 				regulator-always-on;
 			};
 
-			/* LDO3 is unused */
-			ldo3 {
-				regulator-name = "ldo3";
+			/*
+			 * Both LDO3 and LDO4 are used in parallel to
+			 * power up the WiFi/BT Chip.
+			 *
+			 * If those are not enabled, the SDIO part
+			 * will not enumerate, and since there's no
+			 * way currently to pass DT infos to an SDIO
+			 * device, we cannot really do better than
+			 * this ugly hack for now.
+			 */
+			vcc_wifi_1: ldo3 {
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vcc-wifi-1";
+				regulator-always-on;
 			};
 
-			/* LDO4 is unused */
-			ldo4 {
-				regulator-name = "ldo4";
+			vcc_wifi_2: ldo4 {
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vcc-wifi-2";
+				regulator-always-on;
 			};
 
 			vcc_1v8: ldo5 {
@@ -240,7 +263,7 @@
 &mmc0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc0_pins_a>;
-	vmmc-supply = <&wifi_reg_on>;
+	vmmc-supply = <&vcc_3v3>;
 	bus-width = <4>;
 	non-removable;
 	status = "okay";
