@@ -65,6 +65,14 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+	/*
+	 * This is actually an active-low reset line for the WLAN
+	 * part of the WiFi/BT CHIP.
+	 *
+	 * Just like for LDO3 and LDO4, we cannot tie it to the DT
+	 * node of the SDIO device for now, as there is no bindings
+	 * for it, so we need to have this hack.
+	 */
 	wifi_reg_on: wifi_reg_on {
 		compatible = "regulator-fixed";
 		pinctrl-names = "default";
@@ -73,6 +81,7 @@
 		regulator-name = "wifi-reg-on";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
 		gpio = <&pio 2 19 GPIO_ACTIVE_HIGH>; /* PC19 */
 		enable-active-high;
 	};
@@ -191,6 +200,28 @@
 	regulator-min-microvolt = <2700000>;
 	regulator-max-microvolt = <3300000>;
 	regulator-name = "avcc";
+	regulator-always-on;
+};
+
+/*
+ * Both LDO3 and LDO4 are used in parallel to power up the WiFi/BT
+ * Chip.
+ *
+ * If those are not enabled, the SDIO part will not enumerate, and
+ * since there's no way currently to pass DT infos to an SDIO device,
+ * we cannot really do better than this ugly hack for now.
+ */
+&reg_ldo3 {
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
+	regulator-name = "vcc-wifi-1";
+	regulator-always-on;
+};
+
+&reg_ldo4 {
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
+	regulator-name = "vcc-wifi-2";
 	regulator-always-on;
 };
 
