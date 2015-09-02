@@ -1075,6 +1075,40 @@ static int sunxi_nfc_hw_syndrome_ecc_write_page(struct mtd_info *mtd,
 	return 0;
 }
 
+static int sunxi_nfc_hw_common_ecc_read_oob(struct mtd_info *mtd,
+					    struct nand_chip *chip,
+					    int page)
+{
+	chip->cmdfunc(mtd, NAND_CMD_READ0, 0, page);
+
+	chip->pagebuf = -1;
+
+	return chip->ecc.read_page(mtd, chip, chip->buffers->databuf, 1, page);
+}
+
+static int sunxi_nfc_hw_common_ecc_write_oob(struct mtd_info *mtd,
+					     struct nand_chip *chip,
+					     int page)
+{
+	int ret, status;
+
+	chip->cmdfunc(mtd, NAND_CMD_SEQIN, 0, page);
+
+	chip->pagebuf = -1;
+
+	memset(chip->buffers->databuf, 0xff, mtd->writesize);
+	ret = chip->ecc.write_page(mtd, chip, chip->buffers->databuf, 1, page);
+	if (ret)
+		return ret;
+
+	/* Send command to program the OOB data */
+	chip->cmdfunc(mtd, NAND_CMD_PAGEPROG, -1, -1);
+
+	status = chip->waitfunc(mtd, chip);
+
+	return status & NAND_STATUS_FAIL ? -EIO : 0;
+}
+
 static const s32 tWB_lut[] = {6, 12, 16, 20};
 static const s32 tRHW_lut[] = {4, 8, 12, 20};
 
@@ -1316,6 +1350,8 @@ static int sunxi_nand_hw_common_ecc_ctrl_init(struct mtd_info *mtd,
 
 	layout->eccbytes = (ecc->bytes * nsectors);
 
+	ecc->read_oob = sunxi_nfc_hw_common_ecc_read_oob;
+	ecc->write_oob = sunxi_nfc_hw_common_ecc_write_oob;
 	ecc->layout = layout;
 	ecc->priv = data;
 
@@ -1347,6 +1383,8 @@ static int sunxi_nand_hw_ecc_ctrl_init(struct mtd_info *mtd,
 
 	ecc->read_page = sunxi_nfc_hw_ecc_read_page;
 	ecc->write_page = sunxi_nfc_hw_ecc_write_page;
+	ecc->read_oob_raw = nand_read_oob_std;
+	ecc->write_oob_raw = nand_write_oob_std;
 	layout = ecc->layout;
 	nsectors = mtd->writesize / ecc->size;
 
@@ -1401,6 +1439,8 @@ static int sunxi_nand_hw_syndrome_ecc_ctrl_init(struct mtd_info *mtd,
 	ecc->prepad = 4;
 	ecc->read_page = sunxi_nfc_hw_syndrome_ecc_read_page;
 	ecc->write_page = sunxi_nfc_hw_syndrome_ecc_write_page;
+	ecc->read_oob_raw = nand_read_oob_syndrome;
+	ecc->write_oob_raw = nand_write_oob_syndrome;
 
 	layout = ecc->layout;
 	nsectors = mtd->writesize / ecc->size;
@@ -1590,8 +1630,10 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 	if (nand->bbt_options & NAND_BBT_USE_FLASH)
 		nand->bbt_options |= NAND_BBT_NO_OOB;
 
-	if (nand->options & NAND_NEED_SCRAMBLING)
+	if (nand->options & NAND_NEED_SCRAMBLING) {
 		nand->options |= NAND_NO_SUBPAGE_WRITE;
+		nand->bbt_options |= NAND_BBT_SCANRAWMODE;
+	}
 
 	ret = sunxi_nand_chip_init_timings(chip, np);
 	if (ret) {
