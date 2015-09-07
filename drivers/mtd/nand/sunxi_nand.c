@@ -39,7 +39,7 @@
 #include <linux/dmaengine.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
+#include <linux/iopoll.h>
 
 #define NFC_REG_CTL		0x0000
 #define NFC_REG_ST		0x0004
@@ -306,20 +306,16 @@ static irqreturn_t sunxi_nfc_interrupt(int irq, void *dev_id)
 static int sunxi_nfc_wait_int(struct sunxi_nfc *nfc, u32 flags,
 			      unsigned int timeout_ms)
 {
-	init_completion(&nfc->complete);
+	u32 status;
+	int ret;
 
-	writel(flags, nfc->regs + NFC_REG_INT);
+	ret = readl_poll_timeout(nfc->regs + NFC_REG_ST, status,
+				 (status & flags) == flags, 1,
+				 timeout_ms * 1000);
 
-	if (!timeout_ms)
-		timeout_ms = NFC_DEFAULT_TIMEOUT_MS;
+	writel(flags & NFC_INT_MASK, nfc->regs + NFC_REG_ST);
 
-	if (!wait_for_completion_timeout(&nfc->complete,
-					 msecs_to_jiffies(timeout_ms))) {
-		dev_err(nfc->dev, "wait interrupt timedout\n");
-		return -ETIMEDOUT;
-	}
-
-	return 0;
+	return ret;
 }
 
 static int sunxi_nfc_wait_cmd_fifo_empty(struct sunxi_nfc *nfc)
