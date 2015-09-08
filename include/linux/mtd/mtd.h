@@ -134,6 +134,14 @@ struct mtd_info {
 	uint32_t writesize;
 
 	/*
+	 * Minimal read unit size. Usually the same as the writesize but can be
+	 * smaller if the device supports reading smaller data chunks.
+	 * Particularly useful on NAND devices where you can read ECC chunks
+	 * instead of reading the full page.
+	 */
+	uint32_t readsize;
+
+	/*
 	 * Size of the write buffer used by the MTD. MTD devices having a write
 	 * buffer can write multiple writesize chunks at a time. E.g. while
 	 * writing 4 * writesize bytes to a device with 2 * writesize bytes

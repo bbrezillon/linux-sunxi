@@ -712,6 +712,10 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 						ubi->vid_hdr_aloffset;
 	}
 
+	ubi->ec_rd_hdr_alsize = ALIGN(UBI_EC_HDR_SIZE, ubi->mtd->readsize);
+	ubi->vid_rd_hdr_alsize = ALIGN(UBI_VID_HDR_SIZE + ubi->vid_hdr_shift,
+				       ubi->mtd->readsize);
+
 	/* Similar for the data offset */
 	ubi->leb_start = ubi->vid_hdr_offset + UBI_VID_HDR_SIZE;
 	ubi->leb_start = ALIGN(ubi->leb_start, ubi->min_io_size);

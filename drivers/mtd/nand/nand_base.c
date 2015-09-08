@@ -4458,6 +4458,10 @@ int nand_scan_tail(struct mtd_info *mtd)
 	mtd->ecclayout = ecc->layout;
 	mtd->ecc_strength = ecc->strength;
 	mtd->ecc_step_size = ecc->size;
+
+	if (NAND_HAS_SUBPAGE_READ(chip))
+		mtd->readsize = mtd->ecc_step_size;
+
 	/*
 	 * Initialize bitflip_threshold to its default prior scan_bbt() call.
 	 * scan_bbt() might invoke mtd_read(), thus bitflip_threshold must be

@@ -745,7 +745,7 @@ int ubi_io_read_ec_hdr(struct ubi_device *ubi, int pnum,
 	dbg_io("read EC header from PEB %d", pnum);
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
 
-	read_err = ubi_io_read(ubi, ec_hdr, pnum, 0, UBI_EC_HDR_SIZE);
+	read_err = ubi_io_read(ubi, ec_hdr, pnum, 0, ubi->ec_rd_hdr_alsize);
 	if (read_err) {
 		if (read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
 			return read_err;
@@ -1021,7 +1021,7 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 
 	p = (char *)vid_hdr - ubi->vid_hdr_shift;
 	read_err = ubi_io_read(ubi, p, pnum, ubi->vid_hdr_aloffset,
-			  ubi->vid_hdr_alsize);
+			       ubi->vid_rd_hdr_alsize);
 	if (read_err && read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
 		return read_err;
 

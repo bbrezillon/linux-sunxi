@@ -609,7 +609,9 @@ struct ubi_device {
 	int leb_size;
 	int leb_start;
 	int ec_hdr_alsize;
+	int ec_rd_hdr_alsize;
 	int vid_hdr_alsize;
+	int vid_rd_hdr_alsize;
 	int vid_hdr_offset;
 	int vid_hdr_aloffset;
 	int vid_hdr_shift;
