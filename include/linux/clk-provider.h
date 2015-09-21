@@ -518,6 +518,47 @@ struct clk *clk_register_fractional_divider(struct device *dev,
 		void __iomem *reg, u8 mshift, u8 mwidth, u8 nshift, u8 nwidth,
 		u8 clk_divider_flags, spinlock_t *lock);
 
+/**
+ * struct clk_factor - adjustable factor clock
+ *
+ * @hw:		handle between common and hardware-specific interfaces
+ * @reg:	register containing the factor
+ * @shift:	shift to the factor bit field
+ * @width:	width of the factor bit field
+ * @lock:	register lock
+ *
+ * Clock with an adjustable factor affecting its output frequency.
+ * Implements .recalc_rate, .set_rate and .round_rate
+ *
+ * Flags:
+ * CLK_FACTOR_ZERO_BYPASS - By default, the factor is the value read
+ *	from the register, with 0 being a valid value effectively
+ *	zeroing the output clock rate. If CLK_FACTOR_ZERO_BYPASS is
+ *	set, then a null factor will be considered as a bypass,
+ *	leaving the parent rate unmodified.
+ * CLK_FACTOR_ROUND_CLOSEST - Makes the best calculated divider to be
+ *	rounded to the closest integer instead of the down one.
+ */
+struct clk_factor {
+	struct clk_hw	hw;
+	void __iomem	*reg;
+	u8		shift;
+	u8		width;
+	u8		flags;
+	spinlock_t	*lock;
+};
+
+#define CLK_FACTOR_ZERO_BYPASS		BIT(0)
+#define CLK_FACTOR_ROUND_CLOSEST	BIT(1)
+
+extern const struct clk_ops clk_factor_ops;
+
+struct clk *clk_register_factor(struct device *dev, const char *name,
+				const char *parent_name, unsigned long flags,
+				void __iomem *reg, u8 shift, u8 width,
+				u8 clk_factor_flags, spinlock_t *lock);
+void clk_unregister_factor(struct clk *clk);
+
 /***
  * struct clk_composite - aggregate clock of mux, divider and gate clocks
  *
