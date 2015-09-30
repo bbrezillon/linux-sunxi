@@ -418,6 +418,9 @@ int add_mtd_device(struct mtd_info *mtd)
 	mtd->erasesize_mask = (1 << mtd->erasesize_shift) - 1;
 	mtd->writesize_mask = (1 << mtd->writesize_shift) - 1;
 
+	if (!mtd->slc_mode_ratio)
+		mtd->slc_mode_ratio = 1;
+
 	/* Some chips always power up locked. Unlock them now */
 	if ((mtd->flags & MTD_WRITEABLE) && (mtd->flags & MTD_POWERUP_LOCK)) {
 		error = mtd_unlock(mtd, 0, mtd->size);
@@ -873,6 +876,42 @@ unsigned long mtd_get_unmapped_area(struct mtd_info *mtd, unsigned long len,
 }
 EXPORT_SYMBOL_GPL(mtd_get_unmapped_area);
 
+static int mtd_slc_mode_check(struct mtd_info *mtd, loff_t start, size_t len)
+{
+	uint32_t blkoff;
+	size_t adjlen;
+	loff_t end;
+
+	/*
+	 * We have two solutions when the block offset exceed the SLC mode
+	 * erasesize:
+	 * - start writing on the next block
+	 * - complain about invalid parameter
+	 *
+	 * We chose the second solution since SLC mode users should be
+	 * aware of the SLC mode constraints.
+	 */
+	blkoff = start & mtd->erasesize_mask;
+	if (blkoff >= (mtd->erasesize / mtd->slc_mode_ratio))
+		return -EINVAL;
+
+	/*
+	 * Verify that we are not exceeding the MTD device size.
+	 * Each writesize aligned chunk is taking mtd->slc_mode_ratio more
+	 * space in SLC mode.
+	 */
+	end = start & ~mtd->writesize_mask;
+	adjlen = len + (start & mtd->writesize_mask);
+	adjlen = ((adjlen / mtd->writesize) * mtd->slc_mode_ratio) +
+		 (adjlen % mtd->writesize);
+	end += adjlen;
+	blkoff = end & mtd->writesize_mask;
+	if (end > mtd->size)
+		return -EINVAL;
+
+	return 0;
+}
+
 int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
 	     u_char *buf)
 {
@@ -897,6 +936,38 @@ int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
 }
 EXPORT_SYMBOL_GPL(mtd_read);
 
+int mtd_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
+		      size_t *retlen, u_char *buf)
+{
+	int ret_code;
+	*retlen = 0;
+
+	if (!mtd->_read_slc_mode)
+		return mtd_read(mtd, from, len, retlen, buf);
+
+	if (from < 0 || from >= mtd->size ||
+	    mtd_slc_mode_check(mtd, from, len))
+		return -EINVAL;
+
+	if (!len)
+		return 0;
+
+	/*
+	 * In the absence of an error, drivers return a non-negative integer
+	 * representing the maximum number of bitflips that were corrected on
+	 * any one ecc region (if applicable; zero otherwise).
+	 */
+	ret_code = mtd->_read_slc_mode(mtd, from, len, retlen, buf);
+	if (unlikely(ret_code < 0))
+		return ret_code;
+
+	if (mtd->ecc_strength == 0)
+		return 0;	/* device lacks ecc */
+
+	return ret_code >= mtd->bitflip_threshold ? -EUCLEAN : 0;
+}
+EXPORT_SYMBOL_GPL(mtd_read_slc_mode);
+
 int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 	      const u_char *buf)
 {
@@ -910,6 +981,27 @@ int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 	return mtd->_write(mtd, to, len, retlen, buf);
 }
 EXPORT_SYMBOL_GPL(mtd_write);
+
+int mtd_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
+		       size_t *retlen, const u_char *buf)
+{
+	if (!mtd->_write_slc_mode)
+		mtd_write(mtd, to, len, retlen, buf);
+
+	*retlen = 0;
+
+	if (to < 0 || to >= mtd->size || mtd_slc_mode_check(mtd, to, len))
+		return -EINVAL;
+
+	if (!(mtd->flags & MTD_WRITEABLE))
+		return -EROFS;
+
+	if (!len)
+		return 0;
+
+	return mtd->_write_slc_mode(mtd, to, len, retlen, buf);
+}
+EXPORT_SYMBOL_GPL(mtd_write_slc_mode);
 
 /*
  * In blackbox flight recorder like scenarios we want to make successful writes

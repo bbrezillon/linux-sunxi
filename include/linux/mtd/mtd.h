@@ -92,6 +92,7 @@ struct mtd_oob_ops {
 	uint32_t	ooboffs;
 	uint8_t		*datbuf;
 	uint8_t		*oobbuf;
+	bool		slc_mode;
 };
 
 #define MTD_MAX_OOBFREE_ENTRIES_LARGE	32
@@ -156,6 +157,8 @@ struct mtd_info {
 	unsigned int erasesize_mask;
 	unsigned int writesize_mask;
 
+	int slc_mode_ratio;
+
 	/*
 	 * read ops return -EUCLEAN if max number of bitflips corrected on any
 	 * one region comprising an ecc step equals or exceeds this value.
@@ -200,6 +203,10 @@ struct mtd_info {
 		      size_t *retlen, u_char *buf);
 	int (*_write) (struct mtd_info *mtd, loff_t to, size_t len,
 		       size_t *retlen, const u_char *buf);
+	int (*_read_slc_mode) (struct mtd_info *mtd, loff_t from, size_t len,
+			       size_t *retlen, u_char *buf);
+	int (*_write_slc_mode) (struct mtd_info *mtd, loff_t to, size_t len,
+				size_t *retlen, const u_char *buf);
 	int (*_panic_write) (struct mtd_info *mtd, loff_t to, size_t len,
 			     size_t *retlen, const u_char *buf);
 	int (*_read_oob) (struct mtd_info *mtd, loff_t from,
@@ -303,6 +310,10 @@ int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
 	     u_char *buf);
 int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 	      const u_char *buf);
+int mtd_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
+		      size_t *retlen, u_char *buf);
+int mtd_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
+		       size_t *retlen, const u_char *buf);
 int mtd_panic_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 		    const u_char *buf);
 

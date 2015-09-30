@@ -69,6 +69,25 @@ static int part_read(struct mtd_info *mtd, loff_t from, size_t len,
 	return res;
 }
 
+static int part_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
+			      size_t *retlen, u_char *buf)
+{
+	struct mtd_part *part = PART(mtd);
+	struct mtd_ecc_stats stats;
+	int res;
+
+	stats = part->master->ecc_stats;
+	res = part->master->_read_slc_mode(part->master, from + part->offset,
+					   len, retlen, buf);
+	if (unlikely(mtd_is_eccerr(res)))
+		mtd->ecc_stats.failed +=
+			part->master->ecc_stats.failed - stats.failed;
+	else
+		mtd->ecc_stats.corrected +=
+			part->master->ecc_stats.corrected - stats.corrected;
+	return res;
+}
+
 static int part_point(struct mtd_info *mtd, loff_t from, size_t len,
 		size_t *retlen, void **virt, resource_size_t *phys)
 {
@@ -173,6 +192,14 @@ static int part_write(struct mtd_info *mtd, loff_t to, size_t len,
 	struct mtd_part *part = PART(mtd);
 	return part->master->_write(part->master, to + part->offset, len,
 				    retlen, buf);
+}
+
+static int part_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
+			       size_t *retlen, const u_char *buf)
+{
+	struct mtd_part *part = PART(mtd);
+	return part->master->_write_slc_mode(part->master, to + part->offset,
+					     len, retlen, buf);
 }
 
 static int part_panic_write(struct mtd_info *mtd, loff_t to, size_t len,
@@ -373,6 +400,7 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 	slave->mtd.oobsize = master->oobsize;
 	slave->mtd.oobavail = master->oobavail;
 	slave->mtd.subpage_sft = master->subpage_sft;
+	slave->mtd.slc_mode_ratio = master->slc_mode_ratio;
 
 	slave->mtd.name = name;
 	slave->mtd.owner = master->owner;
@@ -391,6 +419,11 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 
 	slave->mtd._read = part_read;
 	slave->mtd._write = part_write;
+
+	if (master->_read_slc_mode)
+		slave->mtd._read_slc_mode = part_read_slc_mode;
+	if (master->_write_slc_mode)
+		slave->mtd._write_slc_mode = part_write_slc_mode;
 
 	if (master->_panic_write)
 		slave->mtd._panic_write = part_panic_write;
