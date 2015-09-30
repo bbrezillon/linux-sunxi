@@ -133,7 +133,7 @@ int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
 	dbg_io("read %d bytes from PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
-	ubi_assert(offset >= 0 && offset + len <= ubi->peb_size);
+	ubi_assert(offset >= 0 && offset + len <= ubi->usable_peb_size);
 	ubi_assert(len > 0);
 
 	err = self_check_not_bad(ubi, pnum);
@@ -164,7 +164,7 @@ int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
 
 	addr = (loff_t)pnum * ubi->peb_size + offset;
 retry:
-	err = mtd_read(ubi->mtd, addr, len, &read, buf);
+	err = mtd_read_slc_mode(ubi->mtd, addr, len, &read, buf);
 	if (err) {
 		const char *errstr = mtd_is_eccerr(err) ? " (ECC error)" : "";
 
@@ -242,7 +242,7 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 	dbg_io("write %d bytes to PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
-	ubi_assert(offset >= 0 && offset + len <= ubi->peb_size);
+	ubi_assert(offset >= 0 && offset + len <= ubi->usable_peb_size);
 	ubi_assert(offset % ubi->hdrs_min_io_size == 0);
 	ubi_assert(len > 0 && len % ubi->hdrs_min_io_size == 0);
 
@@ -281,7 +281,7 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 	}
 
 	addr = (loff_t)pnum * ubi->peb_size + offset;
-	err = mtd_write(ubi->mtd, addr, len, &written, buf);
+	err = mtd_write_slc_mode(ubi->mtd, addr, len, &written, buf);
 	if (err) {
 		ubi_err(ubi, "error %d while writing %d bytes to PEB %d:%d, written %zd bytes",
 			err, len, pnum, offset, written);
@@ -300,7 +300,7 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 		 * to contain only 0xFF bytes.
 		 */
 		offset += len;
-		len = ubi->peb_size - offset;
+		len = ubi->usable_peb_size - offset;
 		if (len)
 			err = ubi_self_check_all_ff(ubi, pnum, offset, len);
 	}
@@ -424,11 +424,13 @@ static int torture_peb(struct ubi_device *ubi, int pnum)
 			goto out;
 
 		/* Make sure the PEB contains only 0xFF bytes */
-		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0,
+				  ubi->usable_peb_size);
 		if (err)
 			goto out;
 
-		err = ubi_check_pattern(ubi->peb_buf, 0xFF, ubi->peb_size);
+		err = ubi_check_pattern(ubi->peb_buf, 0xFF,
+					ubi->usable_peb_size);
 		if (err == 0) {
 			ubi_err(ubi, "erased PEB %d, but a non-0xFF byte found",
 				pnum);
@@ -437,18 +439,21 @@ static int torture_peb(struct ubi_device *ubi, int pnum)
 		}
 
 		/* Write a pattern and check it */
-		memset(ubi->peb_buf, patterns[i], ubi->peb_size);
-		err = ubi_io_write(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		memset(ubi->peb_buf, patterns[i],
+		       ubi->usable_peb_size);
+		err = ubi_io_write(ubi, ubi->peb_buf, pnum, 0,
+				   ubi->usable_peb_size);
 		if (err)
 			goto out;
 
-		memset(ubi->peb_buf, ~patterns[i], ubi->peb_size);
-		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		memset(ubi->peb_buf, ~patterns[i], ubi->usable_peb_size);
+		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0,
+				  ubi->usable_peb_size);
 		if (err)
 			goto out;
 
 		err = ubi_check_pattern(ubi->peb_buf, patterns[i],
-					ubi->peb_size);
+					ubi->usable_peb_size);
 		if (err == 0) {
 			ubi_err(ubi, "pattern %x checking failed for PEB %d",
 				patterns[i], pnum);
@@ -523,7 +528,8 @@ static int nor_erase_prepare(struct ubi_device *ubi, int pnum)
 	err = ubi_io_read_ec_hdr(ubi, pnum, &ec_hdr, 0);
 	if (err != UBI_IO_BAD_HDR_EBADMSG && err != UBI_IO_BAD_HDR &&
 	    err != UBI_IO_FF){
-		err = mtd_write(ubi->mtd, addr, 4, &written, (void *)&data);
+		err = mtd_write_slc_mode(ubi->mtd, addr, 4, &written,
+					 (void *)&data);
 		if(err)
 			goto error;
 	}
@@ -532,7 +538,8 @@ static int nor_erase_prepare(struct ubi_device *ubi, int pnum)
 	if (err != UBI_IO_BAD_HDR_EBADMSG && err != UBI_IO_BAD_HDR &&
 	    err != UBI_IO_FF){
 		addr += ubi->vid_hdr_aloffset;
-		err = mtd_write(ubi->mtd, addr, 4, &written, (void *)&data);
+		err = mtd_write_slc_mode(ubi->mtd, addr, 4, &written,
+					 (void *)&data);
 		if (err)
 			goto error;
 	}
@@ -1342,7 +1349,7 @@ static int self_check_write(struct ubi_device *ubi, const void *buf, int pnum,
 		return 0;
 	}
 
-	err = mtd_read(ubi->mtd, addr, len, &read, buf1);
+	err = mtd_read_slc_mode(ubi->mtd, addr, len, &read, buf1);
 	if (err && !mtd_is_bitflip(err))
 		goto out_free;
 
@@ -1406,7 +1413,7 @@ int ubi_self_check_all_ff(struct ubi_device *ubi, int pnum, int offset, int len)
 		return 0;
 	}
 
-	err = mtd_read(ubi->mtd, addr, len, &read, buf);
+	err = mtd_read_slc_mode(ubi->mtd, addr, len, &read, buf);
 	if (err && !mtd_is_bitflip(err)) {
 		ubi_err(ubi, "err %d while reading %d bytes from PEB %d:%d, read %zd bytes",
 			err, len, pnum, offset, read);
