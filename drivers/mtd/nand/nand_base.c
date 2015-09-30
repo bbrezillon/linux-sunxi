@@ -724,6 +724,8 @@ static void nand_command_lp(struct mtd_info *mtd, unsigned int command,
 			chip->cmd_ctrl(mtd, column >> 8, ctrl);
 		}
 		if (page_addr != -1) {
+			if (chip->slc_mode && chip->fix_page)
+				chip->fix_page(mtd, &page_addr);
 			chip->cmd_ctrl(mtd, page_addr, ctrl);
 			chip->cmd_ctrl(mtd, page_addr >> 8,
 				       NAND_NCE | NAND_ALE);
@@ -1661,6 +1663,34 @@ static int nand_setup_read_retry(struct mtd_info *mtd, int retry_mode)
 	return chip->setup_read_retry(mtd, retry_mode);
 }
 
+static void nand_set_slc_mode(struct mtd_info *mtd, bool enable)
+{
+	struct nand_chip *chip = mtd->priv;
+
+	if (!chip->set_slc_mode)
+		return;
+
+	chip->pagebuf = -1;
+	chip->set_slc_mode(mtd, enable);
+}
+
+static int nand_slc_mode_adjust_page(struct mtd_info *mtd, int page)
+{
+	struct nand_chip *chip = mtd->priv;
+	int npagesperblk = mtd->erasesize >> chip->page_shift;
+	int pageinblk;
+
+	if (!chip->slc_mode)
+		return page;
+
+	npagesperblk = mtd->erasesize >> chip->page_shift;
+	pageinblk = page % npagesperblk;
+	if (pageinblk * mtd->slc_mode_ratio > npagesperblk)
+		page += npagesperblk - pageinblk;
+
+	return page;
+}
+
 /**
  * nand_do_read_ops - [INTERN] Read data with ECC
  * @mtd: MTD device structure
@@ -1690,6 +1720,7 @@ static int nand_do_read_ops(struct mtd_info *mtd, loff_t from,
 	chip->select_chip(mtd, chipnr);
 
 	realpage = (int)(from >> chip->page_shift);
+	realpage = nand_slc_mode_adjust_page(mtd, realpage);
 	page = realpage & chip->pagemask;
 
 	col = (int)(from & (mtd->writesize - 1));
@@ -1697,6 +1728,8 @@ static int nand_do_read_ops(struct mtd_info *mtd, loff_t from,
 	buf = ops->datbuf;
 	oob = ops->oobbuf;
 	oob_required = oob ? 1 : 0;
+
+	nand_set_slc_mode(mtd, chip->slc_mode);
 
 	while (1) {
 		unsigned int ecc_failures = mtd->ecc_stats.failed;
@@ -1812,6 +1845,7 @@ read_retry:
 			if (ret < 0)
 				break;
 			retry_mode = 0;
+			nand_set_slc_mode(mtd, chip->slc_mode);
 		}
 
 		if (!readlen)
@@ -1821,15 +1855,19 @@ read_retry:
 		col = 0;
 		/* Increment page address */
 		realpage++;
+		realpage = nand_slc_mode_adjust_page(mtd, realpage);
 
 		page = realpage & chip->pagemask;
 		/* Check, if we cross a chip boundary */
 		if (!page) {
 			chipnr++;
+			nand_set_slc_mode(mtd, false);
 			chip->select_chip(mtd, -1);
 			chip->select_chip(mtd, chipnr);
+			nand_set_slc_mode(mtd, chip->slc_mode);
 		}
 	}
+	nand_set_slc_mode(mtd, false);
 	chip->select_chip(mtd, -1);
 
 	ops->retlen = ops->len - (size_t) readlen;
@@ -1867,6 +1905,26 @@ static int nand_read(struct mtd_info *mtd, loff_t from, size_t len,
 	ops.datbuf = buf;
 	ops.mode = MTD_OPS_PLACE_OOB;
 	ret = nand_do_read_ops(mtd, from, &ops);
+	*retlen = ops.retlen;
+	nand_release_device(mtd);
+	return ret;
+}
+
+static int nand_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
+			      size_t *retlen, uint8_t *buf)
+{
+	struct mtd_oob_ops ops;
+	struct nand_chip *chip = mtd->priv;
+	int ret;
+
+	nand_get_device(mtd, FL_READING);
+	memset(&ops, 0, sizeof(ops));
+	ops.len = len;
+	ops.datbuf = buf;
+	ops.mode = MTD_OPS_PLACE_OOB;
+	chip->slc_mode = true;
+	ret = nand_do_read_ops(mtd, from, &ops);
+	chip->slc_mode = false;
 	*retlen = ops.retlen;
 	nand_release_device(mtd);
 	return ret;
@@ -2562,6 +2620,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 	}
 
 	realpage = (int)(to >> chip->page_shift);
+	realpage = nand_slc_mode_adjust_page(mtd, realpage);
 	page = realpage & chip->pagemask;
 	blockmask = (1 << (chip->phys_erase_shift - chip->page_shift)) - 1;
 
@@ -2576,6 +2635,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 		goto err_out;
 	}
 
+	nand_set_slc_mode(mtd, chip->slc_mode);
 	while (1) {
 		int bytes = mtd->writesize;
 		int cached = writelen > bytes && page != blockmask;
@@ -2624,13 +2684,16 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 		column = 0;
 		buf += bytes;
 		realpage++;
+		realpage = nand_slc_mode_adjust_page(mtd, realpage);
 
 		page = realpage & chip->pagemask;
 		/* Check, if we cross a chip boundary */
 		if (!page) {
 			chipnr++;
+			nand_set_slc_mode(mtd, false);
 			chip->select_chip(mtd, -1);
 			chip->select_chip(mtd, chipnr);
+			nand_set_slc_mode(mtd, chip->slc_mode);
 		}
 	}
 
@@ -2639,6 +2702,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 		ops->oobretlen = ops->ooblen;
 
 err_out:
+	nand_set_slc_mode(mtd, false);
 	chip->select_chip(mtd, -1);
 	return ret;
 }
@@ -2700,6 +2764,26 @@ static int nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 	ops.datbuf = (uint8_t *)buf;
 	ops.mode = MTD_OPS_PLACE_OOB;
 	ret = nand_do_write_ops(mtd, to, &ops);
+	*retlen = ops.retlen;
+	nand_release_device(mtd);
+	return ret;
+}
+
+static int nand_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
+			       size_t *retlen, const uint8_t *buf)
+{
+	struct mtd_oob_ops ops;
+	struct nand_chip *chip = mtd->priv;
+	int ret;
+
+	nand_get_device(mtd, FL_WRITING);
+	memset(&ops, 0, sizeof(ops));
+	ops.len = len;
+	ops.datbuf = (uint8_t *)buf;
+	ops.mode = MTD_OPS_PLACE_OOB;
+	chip->slc_mode = true;
+	ret = nand_do_write_ops(mtd, to, &ops);
+	chip->slc_mode = false;
 	*retlen = ops.retlen;
 	nand_release_device(mtd);
 	return ret;
@@ -4365,6 +4449,11 @@ int nand_scan_tail(struct mtd_info *mtd)
 	mtd->_block_markbad = nand_block_markbad;
 	mtd->writebufsize = mtd->writesize;
 
+	if (chip->set_slc_mode) {
+		mtd->_read_slc_mode = nand_read_slc_mode;
+		mtd->_write_slc_mode = nand_write_slc_mode;
+		mtd->slc_mode_ratio = chip->bits_per_cell;
+	}
 	/* propagate ecc info to mtd_info */
 	mtd->ecclayout = ecc->layout;
 	mtd->ecc_strength = ecc->strength;
