@@ -322,6 +322,7 @@ retry:
 			     vid_hdr->data_pad = cpu_to_be32(0);
 	vid_hdr->lnum = cpu_to_be32(copy);
 	vid_hdr->sqnum = cpu_to_be64(++ai->max_sqnum);
+	vid_hdr->secure_flag = 1;
 
 	/* The EC header is already there, write the VID header */
 	err = ubi_io_write_vid_hdr(ubi, new_aeb->pnum, vid_hdr);
@@ -329,7 +330,8 @@ retry:
 		goto write_error;
 
 	/* Write the layout volume contents */
-	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size);
+	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size,
+				vid_hdr->secure_flag);
 	if (err)
 		goto write_error;
 
@@ -414,7 +416,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 		}
 
 		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum, 0,
-				       ubi->vtbl_size);
+				       ubi->vtbl_size, aeb->secure_flag);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an
@@ -553,6 +555,8 @@ static int init_volumes(struct ubi_device *ubi,
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
 		vol->name_len = be16_to_cpu(vtbl[i].name_len);
 		vol->usable_leb_size = ubi->leb_size - vol->data_pad;
+		vol->usable_secure_leb_size = ubi->secure_leb_size -
+					      vol->data_pad;
 		memcpy(vol->name, vtbl[i].name, vol->name_len);
 		vol->name[vol->name_len] = '\0';
 		vol->vol_id = i;
@@ -630,6 +634,7 @@ static int init_volumes(struct ubi_device *ubi,
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
 	memcpy(vol->name, UBI_LAYOUT_VOLUME_NAME, vol->name_len + 1);
 	vol->usable_leb_size = ubi->leb_size;
+	vol->usable_secure_leb_size = ubi->secure_leb_size;
 	vol->used_ebs = vol->reserved_pebs;
 	vol->last_eb_bytes = vol->reserved_pebs;
 	vol->used_bytes =
@@ -784,7 +789,7 @@ int ubi_read_volume_table(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	 * The number of supported volumes is limited by the eraseblock size
 	 * and by the UBI_MAX_VOLUMES constant.
 	 */
-	ubi->vtbl_slots = ubi->leb_size / UBI_VTBL_RECORD_SIZE;
+	ubi->vtbl_slots = ubi->secure_leb_size / UBI_VTBL_RECORD_SIZE;
 	if (ubi->vtbl_slots > UBI_MAX_VOLUMES)
 		ubi->vtbl_slots = UBI_MAX_VOLUMES;
 

@@ -40,6 +40,7 @@ void ubi_do_get_device_info(struct ubi_device *ubi, struct ubi_device_info *di)
 {
 	di->ubi_num = ubi->ubi_num;
 	di->leb_size = ubi->leb_size;
+	di->secure_leb_size = ubi->secure_leb_size;
 	di->leb_start = ubi->leb_start;
 	di->min_io_size = ubi->min_io_size;
 	di->max_write_size = ubi->max_write_size;
@@ -89,6 +90,7 @@ void ubi_do_get_volume_info(struct ubi_device *ubi, struct ubi_volume *vol,
 	vi->upd_marker = vol->upd_marker;
 	vi->alignment = vol->alignment;
 	vi->usable_leb_size = vol->usable_leb_size;
+	vi->usable_secure_leb_size = vol->usable_secure_leb_size;
 	vi->name_len = vol->name_len;
 	vi->name = vol->name;
 	vi->cdev = vol->cdev.dev;
@@ -546,6 +548,9 @@ int ubi_leb_write(struct ubi_volume_desc *desc, int lnum, const void *buf,
 	if (len == 0)
 		return 0;
 
+	if (vol->eba_tbl[lnum] < 0)
+		clear_bit(lnum, vol->secure_lebs);
+
 	return ubi_eba_write_leb(ubi, vol, lnum, buf, offset, len);
 }
 EXPORT_SYMBOL_GPL(ubi_leb_write);
@@ -722,9 +727,57 @@ int ubi_leb_map(struct ubi_volume_desc *desc, int lnum)
 	if (vol->eba_tbl[lnum] >= 0)
 		return -EBADMSG;
 
+	clear_bit(lnum, vol->secure_lebs);
+
 	return ubi_eba_write_leb(ubi, vol, lnum, NULL, 0, 0);
 }
 EXPORT_SYMBOL_GPL(ubi_leb_map);
+
+/**
+ * ubi_secure_leb_map - map logical eraseblock to a physical eraseblock.
+ * @desc: volume descriptor
+ * @lnum: logical eraseblock number
+ *
+ * This function maps an un-mapped logical eraseblock @lnum to a physical
+ * eraseblock. This means, that after a successful invocation of this
+ * function the logical eraseblock @lnum will be empty (contain only %0xFF
+ * bytes) and be mapped to a physical eraseblock, even if an unclean reboot
+ * happens.
+ *
+ * This function returns zero in case of success, %-EBADF if the volume is
+ * damaged because of an interrupted update, %-EBADMSG if the logical
+ * eraseblock is already mapped, and other negative error codes in case of
+ * other failures.
+ */
+int ubi_secure_leb_map(struct ubi_volume_desc *desc, int lnum)
+{
+	struct ubi_volume *vol = desc->vol;
+	struct ubi_device *ubi = vol->ubi;
+
+	dbg_gen("map LEB %d:%d", vol->vol_id, lnum);
+
+	if (desc->mode == UBI_READONLY || vol->vol_type == UBI_STATIC_VOLUME)
+		return -EROFS;
+
+	if (lnum < 0 || lnum >= vol->reserved_pebs)
+		return -EINVAL;
+
+	if (vol->upd_marker)
+		return -EBADF;
+
+	if (vol->eba_tbl[lnum] >= 0)
+		return -EBADMSG;
+
+	/*
+	 * Only set the secure flag when the underlying MTD device supports
+	 * SLC mode.
+	 */
+	if (vol->usable_secure_leb_size != vol->usable_leb_size)
+		set_bit(lnum, vol->secure_lebs);
+
+	return ubi_eba_write_leb(ubi, vol, lnum, NULL, 0, 0);
+}
+EXPORT_SYMBOL_GPL(ubi_secure_leb_map);
 
 /**
  * ubi_is_mapped - check if logical eraseblock is mapped.
@@ -757,6 +810,41 @@ int ubi_is_mapped(struct ubi_volume_desc *desc, int lnum)
 	return vol->eba_tbl[lnum] >= 0;
 }
 EXPORT_SYMBOL_GPL(ubi_is_mapped);
+
+int ubi_is_secure(struct ubi_volume_desc *desc, int lnum)
+{
+	struct ubi_volume *vol = desc->vol;
+
+	dbg_gen("test LEB %d:%d", vol->vol_id, lnum);
+
+	if (lnum < 0 || lnum >= vol->reserved_pebs)
+		return -EINVAL;
+
+	if (vol->upd_marker)
+		return -EBADF;
+
+	if (vol->ubi->secure_leb_size == vol->ubi->leb_size)
+		return 1;
+
+	return test_bit(lnum, vol->secure_lebs);
+}
+EXPORT_SYMBOL_GPL(ubi_is_secure);
+
+int ubi_leb_size(struct ubi_volume_desc *desc, int lnum)
+{
+	struct ubi_volume *vol = desc->vol;
+	int ret;
+
+	ret = ubi_is_secure(desc, lnum);
+	if (ret < 0)
+		return ret;
+
+	if (ret)
+		return vol->usable_secure_leb_size;
+
+	return vol->usable_leb_size;
+}
+EXPORT_SYMBOL_GPL(ubi_leb_size);
 
 /**
  * ubi_sync - synchronize UBI device buffers.

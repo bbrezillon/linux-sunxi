@@ -244,6 +244,9 @@ static int write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 			return 0;
 		}
 
+		if (vol->eba_tbl[lnum] < 0)
+			clear_bit(lnum, vol->secure_lebs);
+
 		err = ubi_eba_write_leb(ubi, vol, lnum, buf, 0, len);
 	} else {
 		/*

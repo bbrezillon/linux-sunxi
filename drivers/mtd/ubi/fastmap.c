@@ -96,7 +96,7 @@ size_t ubi_calc_fm_size(struct ubi_device *ubi)
 		(sizeof(struct ubi_fm_eba) +
 		(ubi->peb_count * sizeof(__be32))) +
 		sizeof(struct ubi_fm_volhdr) * UBI_MAX_VOLUMES;
-	return roundup(size, ubi->leb_size);
+	return roundup(size, ubi->secure_leb_size);
 }
 
 
@@ -887,7 +887,8 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		goto out;
 	}
 
-	ret = ubi_io_read(ubi, fmsb, fm_anchor, ubi->leb_start, sizeof(*fmsb));
+	ret = ubi_io_read(ubi, fmsb, fm_anchor, ubi->leb_start, sizeof(*fmsb),
+			  true);
 	if (ret && ret != UBI_IO_BITFLIPS)
 		goto free_fm_sb;
 	else if (ret == UBI_IO_BITFLIPS)
@@ -915,7 +916,7 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		goto free_fm_sb;
 	}
 
-	fm_size = ubi->leb_size * used_blocks;
+	fm_size = ubi->secure_leb_size * used_blocks;
 	if (fm_size != ubi->fm_size) {
 		ubi_err(ubi, "bad fastmap size: %zi, expected: %zi",
 			fm_size, ubi->fm_size);
@@ -998,8 +999,9 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		if (sqnum < be64_to_cpu(vh->sqnum))
 			sqnum = be64_to_cpu(vh->sqnum);
 
-		ret = ubi_io_read(ubi, ubi->fm_buf + (ubi->leb_size * i), pnum,
-				  ubi->leb_start, ubi->leb_size);
+		ret = ubi_io_read(ubi, ubi->fm_buf + (ubi->secure_leb_size * i),
+				  pnum, ubi->leb_start, ubi->secure_leb_size,
+				  true);
 		if (ret && ret != UBI_IO_BITFLIPS) {
 			ubi_err(ubi, "unable to read fastmap block# %i (PEB: %i, "
 				"err: %i)", i, pnum, ret);
@@ -1312,8 +1314,9 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 	}
 
 	for (i = 0; i < new_fm->used_blocks; i++) {
-		ret = ubi_io_write(ubi, fm_raw + (i * ubi->leb_size),
-			new_fm->e[i]->pnum, ubi->leb_start, ubi->leb_size);
+		ret = ubi_io_write(ubi, fm_raw + (i * ubi->secure_leb_size),
+			new_fm->e[i]->pnum, ubi->leb_start,
+			ubi->secure_leb_size, true);
 		if (ret) {
 			ubi_err(ubi, "unable to write fastmap to PEB %i!",
 				new_fm->e[i]->pnum);
@@ -1502,7 +1505,7 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 		return -ENOMEM;
 	}
 
-	new_fm->used_blocks = ubi->fm_size / ubi->leb_size;
+	new_fm->used_blocks = ubi->fm_size / ubi->secure_leb_size;
 	old_fm = ubi->fm;
 	ubi->fm = NULL;
 

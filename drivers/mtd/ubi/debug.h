@@ -21,7 +21,8 @@
 #ifndef __UBI_DEBUG_H__
 #define __UBI_DEBUG_H__
 
-void ubi_dump_flash(struct ubi_device *ubi, int pnum, int offset, int len);
+void ubi_dump_flash(struct ubi_device *ubi, int pnum, int offset, int len,
+		    bool secure);
 void ubi_dump_ec_hdr(const struct ubi_ec_hdr *ec_hdr);
 void ubi_dump_vid_hdr(const struct ubi_vid_hdr *vid_hdr);
 
@@ -59,7 +60,7 @@ void ubi_dump_av(const struct ubi_ainf_volume *av);
 void ubi_dump_aeb(const struct ubi_ainf_peb *aeb, int type);
 void ubi_dump_mkvol_req(const struct ubi_mkvol_req *req);
 int ubi_self_check_all_ff(struct ubi_device *ubi, int pnum, int offset,
-			  int len);
+			  int len, bool secure);
 int ubi_debugfs_init(void);
 void ubi_debugfs_exit(void);
 int ubi_debugfs_init_dev(struct ubi_device *ubi);

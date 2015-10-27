@@ -326,6 +326,7 @@ struct ubi_volume {
 	int reserved_pebs;
 	int vol_type;
 	int usable_leb_size;
+	int usable_secure_leb_size;
 	int used_ebs;
 	int last_eb_bytes;
 	long long used_bytes;
@@ -340,6 +341,7 @@ struct ubi_volume {
 	long long upd_received;
 	void *upd_buf;
 
+	unsigned long *secure_lebs;
 	int *eba_tbl;
 	unsigned int checked:1;
 	unsigned int corrupted:1;
@@ -597,6 +599,7 @@ struct ubi_device {
 	long long flash_size;
 	int peb_count;
 	int peb_size;
+	int secure_peb_size;
 	int bad_peb_count;
 	int good_peb_count;
 	int corr_peb_count;
@@ -606,6 +609,7 @@ struct ubi_device {
 	int hdrs_min_io_size;
 	int ro_mode;
 	int leb_size;
+	int secure_leb_size;
 	int leb_start;
 	int ec_hdr_alsize;
 	int ec_rd_hdr_alsize;
@@ -650,6 +654,7 @@ struct ubi_ainf_peb {
 	int lnum;
 	unsigned int scrub:1;
 	unsigned int copy_flag:1;
+	unsigned int secure_flag:1;
 	unsigned long long sqnum;
 	union {
 		struct rb_node rb;
@@ -864,9 +869,9 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi);
 
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
-		int len);
+		int len, bool secure);
 int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
-		 int len);
+		 int len, bool secure);
 int ubi_io_sync_erase(struct ubi_device *ubi, int pnum, int torture);
 int ubi_io_is_bad(const struct ubi_device *ubi, int pnum);
 int ubi_io_mark_bad(const struct ubi_device *ubi, int pnum);
@@ -1044,10 +1049,11 @@ static inline void ubi_free_vid_hdr(const struct ubi_device *ubi,
  * physical eraseblock.
  */
 static inline int ubi_io_read_data(const struct ubi_device *ubi, void *buf,
-				   int pnum, int offset, int len)
+				   int pnum, int offset, int len, bool secure)
 {
 	ubi_assert(offset >= 0);
-	return ubi_io_read(ubi, buf, pnum, offset + ubi->leb_start, len);
+	return ubi_io_read(ubi, buf, pnum, offset + ubi->leb_start, len,
+			   secure);
 }
 
 /*
@@ -1056,10 +1062,11 @@ static inline int ubi_io_read_data(const struct ubi_device *ubi, void *buf,
  * physical eraseblock.
  */
 static inline int ubi_io_write_data(struct ubi_device *ubi, const void *buf,
-				    int pnum, int offset, int len)
+				    int pnum, int offset, int len, bool secure)
 {
 	ubi_assert(offset >= 0);
-	return ubi_io_write(ubi, buf, pnum, offset + ubi->leb_start, len);
+	return ubi_io_write(ubi, buf, pnum, offset + ubi->leb_start, len,
+			    secure);
 }
 
 /**

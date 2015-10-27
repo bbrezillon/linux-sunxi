@@ -179,6 +179,7 @@ struct ubi_ec_hdr {
  * @vol_id: ID of this volume
  * @lnum: logical eraseblock number
  * @padding1: reserved for future, zeroes
+ * @slc_flag: this LEB is used in SLC mode
  * @data_size: how many bytes of data this logical eraseblock contains
  * @used_ebs: total number of used logical eraseblocks in this volume
  * @data_pad: how many bytes at the end of this physical eraseblock are not
@@ -283,7 +284,8 @@ struct ubi_vid_hdr {
 	__u8    compat;
 	__be32  vol_id;
 	__be32  lnum;
-	__u8    padding1[4];
+	__u8	secure_flag;
+	__u8    padding1[3];
 	__be32  data_size;
 	__be32  used_ebs;
 	__be32  data_pad;

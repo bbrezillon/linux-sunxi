@@ -120,6 +120,7 @@ struct ubi_volume_info {
 	int upd_marker;
 	int alignment;
 	int usable_leb_size;
+	int usable_secure_leb_size;
 	int name_len;
 	const char *name;
 	dev_t cdev;
@@ -190,6 +191,7 @@ struct ubi_device_info {
 	int ubi_num;
 	int leb_size;
 	int leb_start;
+	int secure_leb_size;
 	int min_io_size;
 	int max_write_size;
 	int ro_mode;
@@ -258,7 +260,10 @@ int ubi_leb_change(struct ubi_volume_desc *desc, int lnum, const void *buf,
 int ubi_leb_erase(struct ubi_volume_desc *desc, int lnum);
 int ubi_leb_unmap(struct ubi_volume_desc *desc, int lnum);
 int ubi_leb_map(struct ubi_volume_desc *desc, int lnum);
+int ubi_secure_leb_map(struct ubi_volume_desc *desc, int lnum);
 int ubi_is_mapped(struct ubi_volume_desc *desc, int lnum);
+int ubi_is_secure(struct ubi_volume_desc *desc, int lnum);
+int ubi_leb_size(struct ubi_volume_desc *desc, int lnum);
 int ubi_sync(int ubi_num);
 int ubi_flush(int ubi_num, int vol_id, int lnum);
 

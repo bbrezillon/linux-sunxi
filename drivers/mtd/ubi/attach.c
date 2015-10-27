@@ -396,7 +396,8 @@ int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_peb *aeb,
 	len = be32_to_cpu(vid_hdr->data_size);
 
 	mutex_lock(&ubi->buf_mutex);
-	err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, len);
+	err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, len,
+			       vid_hdr->secure_flag);
 	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
 		goto out_unlock;
 
@@ -545,6 +546,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai, int pnum,
 			aeb->lnum = lnum;
 			aeb->scrub = ((cmp_res & 2) || bitflips);
 			aeb->copy_flag = vid_hdr->copy_flag;
+			aeb->secure_flag = vid_hdr->secure_flag;
 			aeb->sqnum = sqnum;
 
 			if (av->highest_lnum == lnum)
@@ -581,6 +583,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai, int pnum,
 	aeb->lnum = lnum;
 	aeb->scrub = bitflips;
 	aeb->copy_flag = vid_hdr->copy_flag;
+	aeb->secure_flag = vid_hdr->secure_flag;
 	aeb->sqnum = sqnum;
 
 	if (av->highest_lnum <= lnum) {
@@ -769,7 +772,7 @@ static int check_corruption(struct ubi_device *ubi, struct ubi_vid_hdr *vid_hdr,
 	memset(ubi->peb_buf, 0x00, ubi->leb_size);
 
 	err = ubi_io_read(ubi, ubi->peb_buf, pnum, ubi->leb_start,
-			  ubi->leb_size);
+			  ubi->leb_size, false);
 	if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err)) {
 		/*
 		 * Bit-flips or integrity errors while reading the data area.

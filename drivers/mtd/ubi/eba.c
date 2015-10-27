@@ -342,6 +342,7 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 
 	down_read(&ubi->fm_eba_sem);
 	vol->eba_tbl[lnum] = UBI_LEB_UNMAPPED;
+	clear_bit(lnum, vol->secure_lebs);
 	up_read(&ubi->fm_eba_sem);
 	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
 
@@ -441,7 +442,8 @@ retry:
 		ubi_free_vid_hdr(ubi, vid_hdr);
 	}
 
-	err = ubi_io_read_data(ubi, buf, pnum, offset, len);
+	err = ubi_io_read_data(ubi, buf, pnum, offset, len,
+			       test_bit(lnum, vol->secure_lebs));
 	if (err) {
 		if (err == UBI_IO_BITFLIPS)
 			scrub = 1;
@@ -595,7 +597,8 @@ retry:
 
 	/* Read everything before the area where the write failure happened */
 	if (offset > 0) {
-		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset);
+		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset,
+				       vid_hdr->secure_flag);
 		if (err && err != UBI_IO_BITFLIPS) {
 			up_read(&ubi->fm_eba_sem);
 			goto out_unlock;
@@ -604,7 +607,8 @@ retry:
 
 	memcpy(ubi->peb_buf + offset, buf, len);
 
-	err = ubi_io_write_data(ubi, ubi->peb_buf, new_pnum, 0, data_size);
+	err = ubi_io_write_data(ubi, ubi->peb_buf, new_pnum, 0, data_size,
+				vid_hdr->secure_flag);
 	if (err) {
 		mutex_unlock(&ubi->buf_mutex);
 		up_read(&ubi->fm_eba_sem);
@@ -662,6 +666,7 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 {
 	int err, pnum, tries = 0, vol_id = vol->vol_id;
 	struct ubi_vid_hdr *vid_hdr;
+	bool secure;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -670,12 +675,13 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (err)
 		return err;
 
+	secure = test_bit(lnum, vol->secure_lebs);
 	pnum = vol->eba_tbl[lnum];
 	if (pnum >= 0) {
 		dbg_eba("write %d bytes at offset %d of LEB %d:%d, PEB %d",
 			len, offset, vol_id, lnum, pnum);
 
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len);
+		err = ubi_io_write_data(ubi, buf, pnum, offset, len, secure);
 		if (err) {
 			ubi_warn(ubi, "failed to write data to PEB %d", pnum);
 			if (err == -EIO && ubi->bad_allowed)
@@ -704,6 +710,7 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	vid_hdr->lnum = cpu_to_be32(lnum);
 	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
 	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
+	vid_hdr->secure_flag = test_bit(lnum, vol->secure_lebs);
 
 retry:
 	pnum = ubi_wl_get_peb(ubi);
@@ -726,7 +733,7 @@ retry:
 	}
 
 	if (len) {
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len);
+		err = ubi_io_write_data(ubi, buf, pnum, offset, len, secure);
 		if (err) {
 			ubi_warn(ubi, "failed to write %d bytes at offset %d of LEB %d:%d, PEB %d",
 				 len, offset, vol_id, lnum, pnum);
@@ -827,6 +834,7 @@ int ubi_eba_write_leb_st(struct ubi_device *ubi, struct ubi_volume *vol,
 	vid_hdr->data_size = cpu_to_be32(data_size);
 	vid_hdr->used_ebs = cpu_to_be32(used_ebs);
 	vid_hdr->data_crc = cpu_to_be32(crc);
+	vid_hdr->secure_flag = test_bit(lnum, vol->secure_lebs);
 
 retry:
 	pnum = ubi_wl_get_peb(ubi);
@@ -848,7 +856,7 @@ retry:
 		goto write_error;
 	}
 
-	err = ubi_io_write_data(ubi, buf, pnum, 0, len);
+	err = ubi_io_write_data(ubi, buf, pnum, 0, len, false);
 	if (err) {
 		ubi_warn(ubi, "failed to write %d bytes of data to PEB %d",
 			 len, pnum);
@@ -947,6 +955,7 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 	vid_hdr->vol_type = UBI_VID_DYNAMIC;
 	vid_hdr->data_size = cpu_to_be32(len);
 	vid_hdr->copy_flag = 1;
+	vid_hdr->secure_flag = test_bit(lnum, vol->secure_lebs);
 	vid_hdr->data_crc = cpu_to_be32(crc);
 
 retry:
@@ -968,7 +977,7 @@ retry:
 		goto write_error;
 	}
 
-	err = ubi_io_write_data(ubi, buf, pnum, 0, len);
+	err = ubi_io_write_data(ubi, buf, pnum, 0, len, vid_hdr->secure_flag);
 	if (err) {
 		ubi_warn(ubi, "failed to write %d bytes of data to PEB %d",
 			 len, pnum);
@@ -1073,7 +1082,9 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		aldata_size = ALIGN(data_size, ubi->min_io_size);
 	} else
 		data_size = aldata_size =
-			    ubi->leb_size - be32_to_cpu(vid_hdr->data_pad);
+			    (vid_hdr->secure_flag ?
+			     ubi->secure_leb_size : ubi->leb_size) -
+			    be32_to_cpu(vid_hdr->data_pad);
 
 	idx = vol_id2idx(ubi, vol_id);
 	spin_lock(&ubi->volumes_lock);
@@ -1132,7 +1143,8 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	 */
 	mutex_lock(&ubi->buf_mutex);
 	dbg_wl("read %d bytes of data", aldata_size);
-	err = ubi_io_read_data(ubi, ubi->peb_buf, from, 0, aldata_size);
+	err = ubi_io_read_data(ubi, ubi->peb_buf, from, 0, aldata_size,
+			       vid_hdr->secure_flag);
 	if (err && err != UBI_IO_BITFLIPS) {
 		ubi_warn(ubi, "error %d while reading data from PEB %d",
 			 err, from);
@@ -1194,7 +1206,8 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	}
 
 	if (data_size > 0) {
-		err = ubi_io_write_data(ubi, ubi->peb_buf, to, 0, aldata_size);
+		err = ubi_io_write_data(ubi, ubi->peb_buf, to, 0, aldata_size,
+					vid_hdr->secure_flag);
 		if (err) {
 			if (err == -EIO)
 				err = MOVE_TARGET_WR_ERR;
@@ -1208,7 +1221,8 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		 * sure it was written correctly.
 		 */
 		memset(ubi->peb_buf, 0xFF, aldata_size);
-		err = ubi_io_read_data(ubi, ubi->peb_buf, to, 0, aldata_size);
+		err = ubi_io_read_data(ubi, ubi->peb_buf, to, 0, aldata_size,
+				       vid_hdr->secure_flag);
 		if (err) {
 			if (err != UBI_IO_BITFLIPS) {
 				ubi_warn(ubi, "error %d while reading data back from PEB %d",
@@ -1418,6 +1432,14 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			goto out_free;
 		}
 
+		vol->secure_lebs =
+			kzalloc(DIV_ROUND_UP(vol->reserved_pebs, BITS_PER_LONG),
+					     GFP_KERNEL);
+		if (!vol->secure_lebs) {
+			err = -ENOMEM;
+			goto out_free;
+		}
+
 		for (j = 0; j < vol->reserved_pebs; j++)
 			vol->eba_tbl[j] = UBI_LEB_UNMAPPED;
 
@@ -1434,6 +1456,9 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				ubi_move_aeb_to_list(av, aeb, &ai->erase);
 			else
 				vol->eba_tbl[aeb->lnum] = aeb->pnum;
+
+			if (aeb->secure_flag)
+				set_bit(aeb->lnum, vol->secure_lebs);
 		}
 	}
 
@@ -1472,6 +1497,8 @@ out_free:
 			continue;
 		kfree(ubi->volumes[i]->eba_tbl);
 		ubi->volumes[i]->eba_tbl = NULL;
+		kfree(ubi->volumes[i]->secure_lebs);
+		ubi->volumes[i]->secure_lebs = NULL;
 	}
 	return err;
 }
