@@ -98,7 +98,7 @@ int ubifs_scan_a_node(const struct ubifs_info *c, void *buf, int len, int lnum,
 
 		/* Validate the padding node */
 		if (pad_len < 0 ||
-		    offs + node_len + pad_len > c->leb_size) {
+		    offs + node_len + pad_len > ubifs_leb_size(c, lnum)) {
 			if (!quiet) {
 				ubifs_err(c, "bad pad node at LEB %d:%d",
 					  lnum, offs);
@@ -138,7 +138,7 @@ struct ubifs_scan_leb *ubifs_start_scan(const struct ubifs_info *c, int lnum,
 					int offs, void *sbuf)
 {
 	struct ubifs_scan_leb *sleb;
-	int err;
+	int err, leb_size = ubifs_leb_size(c, lnum);
 
 	dbg_scan("scan LEB %d:%d", lnum, offs);
 
@@ -150,10 +150,10 @@ struct ubifs_scan_leb *ubifs_start_scan(const struct ubifs_info *c, int lnum,
 	INIT_LIST_HEAD(&sleb->nodes);
 	sleb->buf = sbuf;
 
-	err = ubifs_leb_read(c, lnum, sbuf + offs, offs, c->leb_size - offs, 0);
+	err = ubifs_leb_read(c, lnum, sbuf + offs, offs, leb_size - offs, 0);
 	if (err && err != -EBADMSG) {
 		ubifs_err(c, "cannot read %d bytes from LEB %d:%d, error %d",
-			  c->leb_size - offs, lnum, offs, err);
+			  leb_size - offs, lnum, offs, err);
 		kfree(sleb);
 		return ERR_PTR(err);
 	}
@@ -241,7 +241,7 @@ void ubifs_scanned_corruption(const struct ubifs_info *c, int lnum, int offs,
 	int len;
 
 	ubifs_err(c, "corruption at LEB %d:%d", lnum, offs);
-	len = c->leb_size - offs;
+	len = ubifs_leb_size(c, lnum) - offs;
 	if (len > 8192)
 		len = 8192;
 	ubifs_err(c, "first %d bytes from LEB %d:%d", len, lnum, offs);
@@ -268,7 +268,7 @@ struct ubifs_scan_leb *ubifs_scan(const struct ubifs_info *c, int lnum,
 				  int offs, void *sbuf, int quiet)
 {
 	void *buf = sbuf + offs;
-	int err, len = c->leb_size - offs;
+	int err, len = ubifs_leb_size(c, lnum) - offs;
 	struct ubifs_scan_leb *sleb;
 
 	sleb = ubifs_start_scan(c, lnum, offs, sbuf);

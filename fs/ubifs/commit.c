@@ -108,7 +108,7 @@ static int nothing_to_commit(struct ubifs_info *c)
  */
 static int do_commit(struct ubifs_info *c)
 {
-	int err, new_ltail_lnum, old_ltail_lnum, i;
+	int err, new_ltail_lnum, old_ltail_lnum;
 	struct ubifs_zbranch zroot;
 	struct ubifs_lp_stats lst;
 
@@ -127,11 +127,9 @@ static int do_commit(struct ubifs_info *c)
 	}
 
 	/* Sync all write buffers (necessary for recovery) */
-	for (i = 0; i < c->jhead_cnt; i++) {
-		err = ubifs_wbuf_sync(&c->jheads[i].wbuf);
-		if (err)
-			goto out_up;
-	}
+	err = ubifs_sync_all_wbufs_nolock(c);
+	if (err)
+		goto out_up;
 
 	c->cmt_no += 1;
 	err = ubifs_gc_start_commit(c);

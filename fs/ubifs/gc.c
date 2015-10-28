@@ -86,7 +86,7 @@ static int switch_gc_head(struct ubifs_info *c)
 	ubifs_assert(gc_lnum != -1);
 	dbg_gc("switch GC head from LEB %d:%d to LEB %d (waste %d bytes)",
 	       wbuf->lnum, wbuf->offs + wbuf->used, gc_lnum,
-	       c->leb_size - wbuf->offs - wbuf->used);
+	       ubifs_leb_size(c, wbuf->lnum) - wbuf->offs - wbuf->used);
 
 	err = ubifs_wbuf_sync_nolock(wbuf);
 	if (err)
@@ -336,6 +336,46 @@ static int move_node(struct ubifs_info *c, struct ubifs_scan_leb *sleb,
 	return err;
 }
 
+struct ubifs_consolidated_node {
+	struct list_head list;
+	union ubifs_key key;
+	int len;
+	int lnum;
+	int offs;
+	int new_offs;
+};
+
+static int consolidate_node(struct ubifs_info *c, struct ubifs_scan_leb *sleb,
+			    struct ubifs_scan_node *snod,
+			    struct ubifs_wbuf *wbuf,
+			    struct list_head *consolidated)
+{
+	int err, new_offs = wbuf->offs + wbuf->used;
+	struct ubifs_consolidated_node *cnod;
+
+	cnod = kzalloc(sizeof(*cnod), GFP_KERNEL);
+	if (!cnod)
+		return -ENOMEM;
+
+	cond_resched();
+	err = ubifs_wbuf_write_nolock(wbuf, snod->node, snod->len);
+	if (err)
+		return err;
+
+	list_add_tail(&cnod->list, consolidated);
+	cnod->key = snod->key;
+	cnod->len = snod->len;
+	cnod->lnum = sleb->lnum;
+	cnod->offs = snod->offs;
+	cnod->new_offs = new_offs;
+
+	list_del(&snod->list);
+	kfree(snod);
+	list_add_tail(&cnod->list, consolidated);
+
+	return 0;
+}
+
 /**
  * move_nodes - move nodes.
  * @c: UBIFS file-system description object
@@ -373,7 +413,8 @@ static int move_nodes(struct ubifs_info *c, struct ubifs_scan_leb *sleb)
 
 		/* Move data nodes */
 		list_for_each_entry_safe(snod, tmp, &sleb->nodes, list) {
-			avail = c->leb_size - wbuf->offs - wbuf->used;
+			avail = ubifs_leb_size(c, wbuf->lnum) - wbuf->offs -
+				wbuf->used;
 			if  (snod->len > avail)
 				/*
 				 * Do not skip data nodes in order to optimize
@@ -388,7 +429,8 @@ static int move_nodes(struct ubifs_info *c, struct ubifs_scan_leb *sleb)
 
 		/* Move non-data nodes */
 		list_for_each_entry_safe(snod, tmp, &nondata, list) {
-			avail = c->leb_size - wbuf->offs - wbuf->used;
+			avail = ubifs_leb_size(c, wbuf->lnum) - wbuf->offs -
+				wbuf->used;
 			if (avail < min)
 				break;
 
@@ -448,8 +490,11 @@ static int gc_sync_wbufs(struct ubifs_info *c)
 	int err, i;
 
 	for (i = 0; i < c->jhead_cnt; i++) {
-		if (i == GCHD)
+		struct ubifs_wbuf *wbuf = &c->jheads[i].wbuf;
+
+		if (i == GCHD || wbuf->manual_sync)
 			continue;
+
 		err = ubifs_wbuf_sync(&c->jheads[i].wbuf);
 		if (err)
 			return err;
@@ -478,12 +523,12 @@ int ubifs_garbage_collect_leb(struct ubifs_info *c, struct ubifs_lprops *lp)
 	ubifs_assert(c->gc_lnum != lnum);
 	ubifs_assert(wbuf->lnum != lnum);
 
-	if (lp->free + lp->dirty == c->leb_size) {
+	if (lp->free + lp->dirty == ubifs_leb_size(c, lp->lnum)) {
 		/* Special case - a free LEB  */
 		dbg_gc("LEB %d is free, return it", lp->lnum);
 		ubifs_assert(!(lp->flags & LPROPS_INDEX));
 
-		if (lp->free != c->leb_size) {
+		if (lp->free != ubifs_leb_size(c, lp->lnum)) {
 			/*
 			 * Write buffers must be sync'd before unmapping
 			 * freeable LEBs, because one of them may contain data
@@ -492,7 +537,8 @@ int ubifs_garbage_collect_leb(struct ubifs_info *c, struct ubifs_lprops *lp)
 			err = gc_sync_wbufs(c);
 			if (err)
 				return err;
-			err = ubifs_change_one_lp(c, lp->lnum, c->leb_size,
+			err = ubifs_change_one_lp(c, lp->lnum,
+						  ubifs_leb_size(c, lp->lnum),
 						  0, 0, 0, 0);
 			if (err)
 				return err;
@@ -553,8 +599,8 @@ int ubifs_garbage_collect_leb(struct ubifs_info *c, struct ubifs_lprops *lp)
 		 * although we freed this LEB, it will become usable only after
 		 * the commit.
 		 */
-		err = ubifs_change_one_lp(c, lnum, c->leb_size, 0, 0,
-					  LPROPS_INDEX, 1);
+		err = ubifs_change_one_lp(c, lnum, ubifs_leb_size(c, lnum),
+					  0, 0, LPROPS_INDEX, 1);
 		if (err)
 			goto out;
 		err = LEB_FREED_IDX;
@@ -570,7 +616,8 @@ int ubifs_garbage_collect_leb(struct ubifs_info *c, struct ubifs_lprops *lp)
 		if (err)
 			goto out_inc_seq;
 
-		err = ubifs_change_one_lp(c, lnum, c->leb_size, 0, 0, 0, 0);
+		err = ubifs_change_one_lp(c, lnum, ubifs_leb_size(c, lnum),
+					  0, 0, 0, 0);
 		if (err)
 			goto out_inc_seq;
 
@@ -607,6 +654,225 @@ out_inc_seq:
 	c->gc_seq += 1;
 	smp_wmb();
 	goto out;
+}
+
+static int ubifs_consolidate_leb(struct ubifs_info *c,
+				 const struct ubifs_lprops *lp,
+				 struct list_head *consolidated)
+{
+	struct ubifs_wbuf *wbuf = &c->jheads[CONSOHD].wbuf;
+	struct ubifs_scan_node *snod, *tmp;
+	struct ubifs_scan_leb *sleb;
+	LIST_HEAD(nondata);
+	int err, min, avail;
+
+	ubifs_assert(lp->flags & LPROPS_CONSO);
+
+	/*
+	 * We scan the entire LEB even though we only really need to scan up to
+	 * (c->leb_size - lp->free).
+	 */
+	sleb = ubifs_scan(c, lp->lnum, 0, c->sbuf, 0);
+	if (IS_ERR(sleb))
+		return PTR_ERR(sleb);
+
+	ubifs_assert(!list_empty(&sleb->nodes));
+	snod = list_entry(sleb->nodes.next, struct ubifs_scan_node, list);
+	ubifs_assert(snod->type != UBIFS_IDX_NODE);
+
+	err = sort_nodes(c, sleb, &nondata, &min);
+	if (err)
+		goto out_scan_destroy;
+
+	/* Move data nodes */
+	list_for_each_entry_safe(snod, tmp, &sleb->nodes, list) {
+		avail = ubifs_leb_size(c, wbuf->lnum) - wbuf->offs -
+			wbuf->used;
+		if  (snod->len > avail)
+			/*
+			 * Do not skip data nodes in order to optimize
+			 * bulk-read.
+			 */
+			break;
+
+		err = consolidate_node(c, sleb, snod, wbuf, consolidated);
+		if (err)
+			goto out_scan_destroy;
+	}
+
+	/* Move non-data nodes */
+	list_for_each_entry_safe(snod, tmp, &nondata, list) {
+		avail = ubifs_leb_size(c, wbuf->lnum) - wbuf->offs -
+			wbuf->used;
+		if (avail < min)
+			break;
+
+		if  (snod->len > avail) {
+			/*
+			 * Keep going only if this is an inode with
+			 * some data. Otherwise stop and switch the GC
+			 * head. IOW, we assume that data-less inode
+			 * nodes and direntry nodes are roughly of the
+			 * same size.
+			 */
+			if (key_type(c, &snod->key) == UBIFS_DENT_KEY ||
+			    snod->len == UBIFS_INO_NODE_SZ)
+				break;
+			continue;
+		}
+
+		err = consolidate_node(c, sleb, snod, wbuf, consolidated);
+		if (err)
+			goto out_scan_destroy;
+	}
+
+	if (list_empty(&sleb->nodes) && list_empty(&nondata))
+		err = 1;
+
+out_scan_destroy:
+	list_splice_tail(&nondata, &sleb->nodes);
+	ubifs_scan_destroy(sleb);
+
+	return err;
+}
+
+int ubifs_consolidate_full_lebs(struct ubifs_info *c)
+{
+	struct ubifs_wbuf *wbuf = &c->jheads[CONSOHD].wbuf;
+	struct ubifs_consolidated_node *cnod, *tmp;
+	const struct ubifs_lprops *lp;
+	int err = 0, lnum, prev_lnum = -1, dirt;
+	LIST_HEAD(consolidated);
+
+	mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
+
+	if (wbuf->lnum < 0) {
+		lnum = ubifs_find_free_leb_for_data(c);
+		if (lnum < 0) {
+			err = lnum;
+			goto out;
+		}
+
+		/* Manually map the LEB to for unsecure LEB mapping */
+		err = ubifs_unsecure_leb_map(c, lnum);
+		if (err)
+			goto out;
+
+		err = ubifs_wbuf_seek_nolock(wbuf, lnum, 0);
+		if (err)
+			goto out;
+	} else {
+		lnum = wbuf->lnum;
+	}
+
+	dirt = ubifs_leb_size(c, lnum);
+
+	while (1) {
+		ubifs_get_lprops(c);
+		lp = ubifs_fast_find_full(c);
+		if (lp)
+			lp = ubifs_change_lp(c, lp, LPROPS_NC, LPROPS_NC,
+					     LPROPS_CONSO, 0);
+		ubifs_release_lprops(c);
+
+		if (IS_ERR_OR_NULL(lp)) {
+			err = PTR_ERR(lp);
+			break;
+		}
+
+		err = ubifs_consolidate_leb(c, lp, &consolidated);
+		if (err <= 0)
+			break;
+	}
+
+	/*
+	 * Nothing has been consolidated, we can safely exit this function
+	 * leaving the LEB assigned to consolidation head.
+	 */
+	if (list_empty(&consolidated))
+		goto out;
+
+	if (err < 0)
+		goto out_release_leb;
+
+	/*
+	 * Sync write buffer before updating TNC and adding a new bud to the
+	 * log.
+	 */
+	err = ubifs_wbuf_sync_nolock(wbuf);
+	if (err)
+		goto out_release_leb;
+
+	dirt = ubifs_leb_size(c, lnum) - wbuf->offs;
+
+	/*
+	 * Now that everything is written on the unsecure LEB we can safely
+	 * update the TNC: if a power-cut occurs now, we shouldn't experience
+	 * any corruption due to paired pages.
+	 * This is done in two steps to avoid problems if the TNC is committed
+	 * in the middle of a consolidation operation, in which case the index
+	 * could point to an unsecure LEB which might be corrupted if a power
+	 * cut happens after the index is updated but before the consolidation
+	 * is complete.
+	 */
+	list_for_each_entry(cnod, &consolidated, list) {
+		err = ubifs_tnc_replace(c, &cnod->key, cnod->lnum,
+					cnod->offs, lnum, cnod->new_offs,
+					cnod->len);
+		if (err)
+			break;
+
+		prev_lnum = cnod->lnum;
+	}
+
+	/*
+	 * If an error occurred while updating the TNC, revert everything.
+	 */
+	if (err) {
+		list_for_each_entry(tmp, &consolidated, list) {
+			ubifs_tnc_replace(c, &cnod->key, lnum, cnod->new_offs,
+					  cnod->lnum, cnod->offs, cnod->len);
+			if (tmp == cnod)
+				break;
+		}
+	}
+	/*
+	 * Free nodes in the consolidated list and release the consolidated
+	 * LEBs.
+	 */
+	list_for_each_entry_safe(cnod, tmp, &consolidated, list) {
+		if (prev_lnum != -1 && prev_lnum != cnod->lnum)
+			ubifs_change_one_lp(c, prev_lnum, LPROPS_NC, LPROPS_NC,
+					    0, LPROPS_CONSO, 0);
+
+		prev_lnum = cnod->lnum;
+		list_del(&cnod->list);
+		kfree(cnod);
+	}
+
+	/* Add a new bud node referencing the consolidated LEB */
+	err = ubifs_add_bud_to_log(c, CONSOHD, lnum, 0);
+
+out_release_leb:
+	/*
+	 * Consider the whole LEB as dirty in case of failures because
+	 * it has been mapped as an unsecure LEB which is not suitable
+	 * for other UBIFS use cases.
+	 */
+	if (err) {
+		ubifs_change_one_lp(c, lnum, 0, ubifs_leb_size(c, lnum), 0,
+				    LPROPS_TAKEN, 0);
+	} else {
+		ubifs_update_one_lp(c, lnum, 0, dirt, 0, LPROPS_TAKEN);
+		ubifs_change_one_lp(c, lnum, 0, ubifs_leb_size(c, lnum), 0,
+				    LPROPS_TAKEN, 0);
+	}
+
+	wbuf->lnum = -1;
+out:
+	mutex_unlock(&wbuf->io_mutex);
+
+	return err;
 }
 
 /**
@@ -668,7 +934,7 @@ int ubifs_garbage_collect(struct ubifs_info *c, int anyway)
 	ubifs_assert(!wbuf->used);
 
 	for (i = 0; ; i++) {
-		int space_before, space_after;
+		int space_before, space_after, leb_size;
 
 		cond_resched();
 
@@ -717,9 +983,12 @@ int ubifs_garbage_collect(struct ubifs_info *c, int anyway)
 		       lp.lnum, lp.free, lp.dirty, lp.free + lp.dirty,
 		       min_space);
 
-		space_before = c->leb_size - wbuf->offs - wbuf->used;
+		leb_size = ubifs_leb_size(c, wbuf->lnum);
+
 		if (wbuf->lnum == -1)
 			space_before = 0;
+		else
+			space_before = leb_size - wbuf->offs - wbuf->used;
 
 		ret = ubifs_garbage_collect_leb(c, &lp);
 		if (ret < 0) {
@@ -757,7 +1026,7 @@ int ubifs_garbage_collect(struct ubifs_info *c, int anyway)
 		}
 
 		ubifs_assert(ret == LEB_RETAINED);
-		space_after = c->leb_size - wbuf->offs - wbuf->used;
+		space_after = leb_size - wbuf->offs - wbuf->used;
 		dbg_gc("LEB %d retained, freed %d bytes", lp.lnum,
 		       space_after - space_before);
 
@@ -861,7 +1130,8 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 		err = ubifs_leb_unmap(c, lp->lnum);
 		if (err)
 			goto out;
-		lp = ubifs_change_lp(c, lp, c->leb_size, 0, lp->flags, 0);
+		lp = ubifs_change_lp(c, lp, ubifs_leb_size(c, lp->lnum), 0,
+				     lp->flags, 0);
 		if (IS_ERR(lp)) {
 			err = PTR_ERR(lp);
 			goto out;
@@ -892,7 +1162,8 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 		ubifs_assert(lp->flags & LPROPS_INDEX);
 		/* Don't release the LEB until after the next commit */
 		flags = (lp->flags | LPROPS_TAKEN) ^ LPROPS_INDEX;
-		lp = ubifs_change_lp(c, lp, c->leb_size, 0, flags, 1);
+		lp = ubifs_change_lp(c, lp, ubifs_leb_size(c, lp->lnum),
+				     0, flags, 1);
 		if (IS_ERR(lp)) {
 			err = PTR_ERR(lp);
 			kfree(idx_gc);

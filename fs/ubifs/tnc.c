@@ -1415,6 +1415,38 @@ static int maybe_leb_gced(struct ubifs_info *c, int lnum, int gc_seq1)
 }
 
 /**
+ * maybe_leb_gced - determine if a LEB may have been consolidated.
+ * @c: UBIFS file-system description object
+ * @lnum: LEB number
+ * @consolidated_seq1: consolidation sequence number
+ *
+ * This function determines if @lnum may have been consolidated since
+ * sequence number @gc_seq1. If it may have been then %1 is returned, otherwise
+ * %0 is returned.
+ */
+static int maybe_leb_consolidated(struct ubifs_info *c, int lnum,
+				  int consolidated_seq1)
+{
+	int consolidated_seq2;
+
+	smp_rmb();
+	consolidated_seq2 = c->consolidation_seq;
+	/* Same seq means no consolidation */
+	if (consolidated_seq1 == consolidated_seq2)
+		return 0;
+
+	/*
+	 * TODO:
+	 * Consolidation can collect several LEBs in one go, which complicates
+	 * the leb_consolidated test.
+	 * Until we find a better way to test that, assume the LEB may have
+	 * been consolidated as soon as the sequence number is different.
+	 *
+	 */
+	return 1;
+}
+
+/**
  * ubifs_tnc_locate - look up a file-system node and return it and its location.
  * @c: UBIFS file-system description object
  * @key: node key to lookup
@@ -1430,7 +1462,7 @@ static int maybe_leb_gced(struct ubifs_info *c, int lnum, int gc_seq1)
 int ubifs_tnc_locate(struct ubifs_info *c, const union ubifs_key *key,
 		     void *node, int *lnum, int *offs)
 {
-	int found, n, err, safely = 0, gc_seq1;
+	int found, n, err, safely = 0, gc_seq1, consolidated_seq1;
 	struct ubifs_znode *znode;
 	struct ubifs_zbranch zbr, *zt;
 
@@ -1464,6 +1496,7 @@ again:
 	/* Drop the TNC mutex prematurely and race with garbage collection */
 	zbr = znode->zbranch[n];
 	gc_seq1 = c->gc_seq;
+	consolidated_seq1 = c->consolidation_seq;
 	mutex_unlock(&c->tnc_mutex);
 
 	if (ubifs_get_wbuf(c, zbr.lnum)) {
@@ -1473,7 +1506,8 @@ again:
 	}
 
 	err = fallible_read_node(c, key, &zbr, node);
-	if (err <= 0 || maybe_leb_gced(c, zbr.lnum, gc_seq1)) {
+	if (err <= 0 || maybe_leb_gced(c, zbr.lnum, gc_seq1) ||
+	    maybe_leb_consolidated(c, zbr.lnum, consolidated_seq1)) {
 		/*
 		 * The node may have been GC'ed out from under us so try again
 		 * while keeping the TNC mutex locked.
@@ -1591,6 +1625,7 @@ out:
 		err = 0;
 	}
 	bu->gc_seq = c->gc_seq;
+	bu->consolidation_seq = c->consolidation_seq;
 	mutex_unlock(&c->tnc_mutex);
 	if (err)
 		return err;
@@ -1641,8 +1676,8 @@ static int read_wbuf(struct ubifs_wbuf *wbuf, void *buf, int len, int lnum,
 
 	dbg_io("LEB %d:%d, length %d", lnum, offs, len);
 	ubifs_assert(wbuf && lnum >= 0 && lnum < c->leb_cnt && offs >= 0);
-	ubifs_assert(!(offs & 7) && offs < c->leb_size);
-	ubifs_assert(offs + len <= c->leb_size);
+	ubifs_assert(!(offs & 7) && offs < ubifs_leb_size(c, lnum));
+	ubifs_assert(offs + len <= ubifs_leb_size(c, lnum));
 
 	spin_lock(&wbuf->lock);
 	overlap = (lnum == wbuf->lnum && offs + len > wbuf->offs);
@@ -1753,7 +1788,8 @@ int ubifs_tnc_bulk_read(struct ubifs_info *c, struct bu_info *bu)
 		err = ubifs_leb_read(c, lnum, bu->buf, offs, len, 0);
 
 	/* Check for a race with GC */
-	if (maybe_leb_gced(c, lnum, bu->gc_seq))
+	if (maybe_leb_gced(c, lnum, bu->gc_seq) ||
+	    maybe_leb_consolidated(c, lnum, bu->consolidation_seq))
 		return -EAGAIN;
 
 	if (err && err != -EBADMSG) {
