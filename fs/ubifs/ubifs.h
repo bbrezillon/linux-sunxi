@@ -120,6 +120,7 @@
 #define GCHD   UBIFS_GC_HEAD
 #define BASEHD UBIFS_BASE_HEAD
 #define DATAHD UBIFS_DATA_HEAD
+#define CONSOHD UBIFS_CONSOLIDATED_HEAD
 
 /* 'No change' value for 'ubifs_change_lp()' */
 #define LPROPS_NC 0x80000001
@@ -451,9 +452,11 @@ struct ubifs_unclean_leb {
  * LPROPS_EMPTY: LEB is empty, not taken
  * LPROPS_FREEABLE: free + dirty == leb_size, not index, not taken
  * LPROPS_FRDI_IDX: free + dirty == leb_size and index, may be taken
+ * LPROPS_FULL: dirty + free < @c->full_wm, not index
  * LPROPS_CAT_MASK: mask for the LEB categories above
  * LPROPS_TAKEN: LEB was taken (this flag is not saved on the media)
  * LPROPS_INDEX: LEB contains indexing nodes (this flag also exists on flash)
+ * LPROPS_CONSO: LEB nodes are being moved elsewhere
  */
 enum {
 	LPROPS_UNCAT     =  0,
@@ -464,9 +467,11 @@ enum {
 	LPROPS_EMPTY     =  4,
 	LPROPS_FREEABLE  =  5,
 	LPROPS_FRDI_IDX  =  6,
+	LPROPS_FULL      =  7,
 	LPROPS_CAT_MASK  = 15,
 	LPROPS_TAKEN     = 16,
 	LPROPS_INDEX     = 32,
+	LPROPS_CONSO     = 64,
 };
 
 /**
@@ -673,6 +678,7 @@ typedef int (*ubifs_lpt_scan_callback)(struct ubifs_info *c,
  * @timer: write-buffer timer
  * @no_timer: non-zero if this write-buffer does not have a timer
  * @need_sync: non-zero if the timer expired and the wbuf needs sync'ing
+ * @manual_sync: non-zero if the write-buffer should only be synced manually
  * @next_ino: points to the next position of the following inode number
  * @inodes: stores the inode numbers of the nodes which are in wbuf
  *
@@ -703,6 +709,7 @@ struct ubifs_wbuf {
 	struct hrtimer timer;
 	unsigned int no_timer:1;
 	unsigned int need_sync:1;
+	unsigned int manual_sync:1;
 	int next_ino;
 	ino_t *inodes;
 };
@@ -806,6 +813,7 @@ struct bu_info {
 	void *buf;
 	int buf_len;
 	int gc_seq;
+	int consolidation_seq;
 	int cnt;
 	int blk_cnt;
 	int eof;
@@ -1123,6 +1131,7 @@ struct ubifs_debug_info;
  *                data nodes of maximum size - used in free space reporting
  * @dead_wm: LEB dead space watermark
  * @dark_wm: LEB dark space watermark
+ * @full_wm: LEB full watermark
  * @block_cnt: count of 4KiB blocks on the FS
  *
  * @ranges: UBIFS node length ranges
@@ -1326,8 +1335,8 @@ struct ubifs_info {
 	int max_write_size;
 	int max_write_shift;
 	int leb_size;
+	int unsecure_leb_size;
 	int leb_start;
-	int half_leb_size;
 	int idx_leb_size;
 	int leb_cnt;
 	int max_leb_cnt;
@@ -1355,6 +1364,7 @@ struct ubifs_info {
 	int leb_overhead;
 	int dead_wm;
 	int dark_wm;
+	int full_wm;
 	int block_cnt;
 
 	struct ubifs_node_range ranges[UBIFS_NODE_TYPES_CNT];
@@ -1388,6 +1398,8 @@ struct ubifs_info {
 	int idx_gc_cnt;
 	int gc_seq;
 	int gced_lnum;
+
+	int consolidation_seq;
 
 	struct list_head infos_list;
 	struct mutex umount_mutex;
@@ -1428,6 +1440,7 @@ struct ubifs_info {
 	struct list_head empty_list;
 	struct list_head freeable_list;
 	struct list_head frdi_idx_list;
+	struct list_head full_list;
 	int freeable_cnt;
 	int in_a_category_cnt;
 
@@ -1489,7 +1502,10 @@ int ubifs_leb_write(struct ubifs_info *c, int lnum, const void *buf, int offs,
 int ubifs_leb_change(struct ubifs_info *c, int lnum, const void *buf, int len);
 int ubifs_leb_unmap(struct ubifs_info *c, int lnum);
 int ubifs_leb_map(struct ubifs_info *c, int lnum);
+int ubifs_unsecure_leb_map(struct ubifs_info *c, int lnum);
 int ubifs_is_mapped(const struct ubifs_info *c, int lnum);
+int ubifs_leb_size(const struct ubifs_info *c, int lnum);
+int ubifs_half_leb_size(const struct ubifs_info *c, int lnum);
 int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len);
 int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs);
 int ubifs_wbuf_init(struct ubifs_info *c, struct ubifs_wbuf *wbuf);
@@ -1509,6 +1525,7 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf);
 int ubifs_bg_wbufs_sync(struct ubifs_info *c);
 void ubifs_wbuf_add_ino_nolock(struct ubifs_wbuf *wbuf, ino_t inum);
 int ubifs_sync_wbufs_by_inode(struct ubifs_info *c, struct inode *inode);
+int ubifs_sync_all_wbufs_nolock(struct ubifs_info *c);
 
 /* scan.c */
 struct ubifs_scan_leb *ubifs_scan(const struct ubifs_info *c, int lnum,
@@ -1577,6 +1594,7 @@ long long ubifs_calc_available(const struct ubifs_info *c, int min_idx_lebs);
 int ubifs_find_free_space(struct ubifs_info *c, int min_space, int *offs,
 			  int squeeze);
 int ubifs_find_free_leb_for_idx(struct ubifs_info *c);
+int ubifs_find_free_leb_for_data(struct ubifs_info *c);
 int ubifs_find_dirty_leb(struct ubifs_info *c, struct ubifs_lprops *ret_lp,
 			 int min_space, int pick_free);
 int ubifs_find_dirty_idx_leb(struct ubifs_info *c);
@@ -1741,6 +1759,7 @@ const struct ubifs_lprops *ubifs_fast_find_free(struct ubifs_info *c);
 const struct ubifs_lprops *ubifs_fast_find_empty(struct ubifs_info *c);
 const struct ubifs_lprops *ubifs_fast_find_freeable(struct ubifs_info *c);
 const struct ubifs_lprops *ubifs_fast_find_frdi_idx(struct ubifs_info *c);
+const struct ubifs_lprops *ubifs_fast_find_full(struct ubifs_info *c);
 int ubifs_calc_dark(const struct ubifs_info *c, int spc);
 
 /* file.c */

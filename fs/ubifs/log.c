@@ -102,9 +102,10 @@ struct ubifs_wbuf *ubifs_get_wbuf(struct ubifs_info *c, int lnum)
 static inline long long empty_log_bytes(const struct ubifs_info *c)
 {
 	long long h, t;
+	int leb_size = ubifs_leb_size(c, c->lhead_lnum);
 
-	h = (long long)c->lhead_lnum * c->leb_size + c->lhead_offs;
-	t = (long long)c->ltail_lnum * c->leb_size;
+	h = (long long)c->lhead_lnum * leb_size + c->lhead_offs;
+	t = (long long)c->ltail_lnum * leb_size;
 
 	if (h > t)
 		return c->log_bytes - h + t;
@@ -153,7 +154,7 @@ void ubifs_add_bud(struct ubifs_info *c, struct ubifs_bud *bud)
 	 * guarantee fixed mount time, and this bud will anyway be read and
 	 * scanned.
 	 */
-	c->bud_bytes += c->leb_size - bud->start;
+	c->bud_bytes += ubifs_leb_size(c, bud->lnum) - bud->start;
 
 	dbg_log("LEB %d:%d, jhead %s, bud_bytes %lld", bud->lnum,
 		bud->start, dbg_jhead(bud->jhead), c->bud_bytes);
@@ -175,7 +176,7 @@ void ubifs_add_bud(struct ubifs_info *c, struct ubifs_bud *bud)
  */
 int ubifs_add_bud_to_log(struct ubifs_info *c, int jhead, int lnum, int offs)
 {
-	int err;
+	int err, leb_size = ubifs_leb_size(c, lnum);
 	struct ubifs_bud *bud;
 	struct ubifs_ref_node *ref;
 
@@ -213,7 +214,7 @@ int ubifs_add_bud_to_log(struct ubifs_info *c, int jhead, int lnum, int offs)
 	 * because we are holding @c->log_mutex. All @c->bud_bytes take place
 	 * when both @c->log_mutex and @c->bud_bytes are locked.
 	 */
-	if (c->bud_bytes + c->leb_size - offs > c->max_bud_bytes) {
+	if (c->bud_bytes + leb_size - offs > c->max_bud_bytes) {
 		dbg_log("bud bytes %lld (%lld max), require commit",
 			c->bud_bytes, c->max_bud_bytes);
 		ubifs_commit_required(c);
@@ -242,7 +243,7 @@ int ubifs_add_bud_to_log(struct ubifs_info *c, int jhead, int lnum, int offs)
 	ref->offs = cpu_to_le32(bud->start);
 	ref->jhead = cpu_to_le32(jhead);
 
-	if (c->lhead_offs > c->leb_size - c->ref_node_alsz) {
+	if (c->lhead_offs > leb_size - c->ref_node_alsz) {
 		c->lhead_lnum = ubifs_next_log_lnum(c, c->lhead_lnum);
 		ubifs_assert(c->lhead_lnum != c->ltail_lnum);
 		c->lhead_offs = 0;
@@ -325,10 +326,12 @@ static void remove_buds(struct ubifs_info *c)
 				wbuf->offs - bud->start, c->cmt_bud_bytes);
 			bud->start = wbuf->offs;
 		} else {
-			c->cmt_bud_bytes += c->leb_size - bud->start;
+			int leb_size = ubifs_leb_size(c, bud->lnum);
+
+			c->cmt_bud_bytes += leb_size - bud->start;
 			dbg_log("remove %d:%d, jhead %s, bud bytes %d, cmt_bud_bytes %lld",
 				bud->lnum, bud->start, dbg_jhead(bud->jhead),
-				c->leb_size - bud->start, c->cmt_bud_bytes);
+				leb_size - bud->start, c->cmt_bud_bytes);
 			rb_erase(p1, &c->buds);
 			/*
 			 * If the commit does not finish, the recovery will need
@@ -389,7 +392,7 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 		int lnum = c->jheads[i].wbuf.lnum;
 		int offs = c->jheads[i].wbuf.offs;
 
-		if (lnum == -1 || offs == c->leb_size)
+		if (lnum == -1 || offs == ubifs_leb_size(c, lnum))
 			continue;
 
 		dbg_log("add ref to LEB %d:%d for jhead %s",
@@ -427,7 +430,7 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 	*ltail_lnum = c->lhead_lnum;
 
 	c->lhead_offs += len;
-	if (c->lhead_offs == c->leb_size) {
+	if (c->lhead_offs == ubifs_leb_size(c, c->lhead_lnum)) {
 		c->lhead_lnum = ubifs_next_log_lnum(c, c->lhead_lnum);
 		c->lhead_offs = 0;
 	}
@@ -474,7 +477,7 @@ int ubifs_log_end_commit(struct ubifs_info *c, int ltail_lnum)
 	 * The commit is finished and from now on it must be guaranteed that
 	 * there is always enough space for the next commit.
 	 */
-	c->min_log_bytes = c->leb_size;
+	c->min_log_bytes = ubifs_leb_size(c, ltail_lnum);
 
 	spin_lock(&c->buds_lock);
 	c->bud_bytes -= c->cmt_bud_bytes;
@@ -603,7 +606,8 @@ static int add_node(struct ubifs_info *c, void *buf, int *lnum, int *offs,
 		    void *node)
 {
 	struct ubifs_ch *ch = node;
-	int len = le32_to_cpu(ch->len), remains = c->leb_size - *offs;
+	int len = le32_to_cpu(ch->len);
+	int remains = ubifs_leb_size(c, *lnum) - *offs;
 
 	if (len > remains) {
 		int sz = ALIGN(*offs, c->min_io_size), err;
@@ -740,7 +744,7 @@ static int dbg_check_bud_bytes(struct ubifs_info *c)
 	spin_lock(&c->buds_lock);
 	for (i = 0; i < c->jhead_cnt; i++)
 		list_for_each_entry(bud, &c->jheads[i].buds_list, list)
-			bud_bytes += c->leb_size - bud->start;
+			bud_bytes += ubifs_leb_size(c, bud->lnum) - bud->start;
 
 	if (c->bud_bytes != bud_bytes) {
 		ubifs_err(c, "bad bud_bytes %lld, calculated %lld",

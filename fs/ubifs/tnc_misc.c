@@ -315,7 +315,8 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 
 		if (zbr->lnum < c->main_first ||
 		    zbr->lnum >= c->leb_cnt || zbr->offs < 0 ||
-		    zbr->offs + zbr->len > c->leb_size || zbr->offs & 7) {
+		    zbr->offs + zbr->len > ubifs_leb_size(c, zbr->lnum) ||
+		    zbr->offs & 7) {
 			ubifs_err(c, "bad branch %d", i);
 			err = 2;
 			goto out_dump;

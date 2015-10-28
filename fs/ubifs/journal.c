@@ -132,7 +132,7 @@ again:
 		goto out_unlock;
 	}
 
-	avail = c->leb_size - wbuf->offs - wbuf->used;
+	avail = ubifs_leb_size(c, wbuf->lnum) - wbuf->offs - wbuf->used;
 	if (wbuf->lnum != -1 && avail >= len)
 		return 0;
 
@@ -181,7 +181,7 @@ again:
 
 	mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
 	dbg_jnl("got LEB %d for jhead %s", lnum, dbg_jhead(jhead));
-	avail = c->leb_size - wbuf->offs - wbuf->used;
+	avail = ubifs_leb_size(c, lnum) - wbuf->offs - wbuf->used;
 
 	if (wbuf->lnum != -1 && avail >= len) {
 		/*

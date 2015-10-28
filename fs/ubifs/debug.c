@@ -656,11 +656,11 @@ void ubifs_dump_lprop(const struct ubifs_info *c, const struct ubifs_lprops *lp)
 
 	if (lp->flags & LPROPS_INDEX)
 		pr_err("LEB %-7d free %-8d dirty %-8d used %-8d free + dirty %-8d flags %#x (",
-		       lp->lnum, lp->free, lp->dirty, c->leb_size - spc, spc,
+		       lp->lnum, lp->free, lp->dirty, ubifs_leb_size(c, lp->lnum) - spc, spc,
 		       lp->flags);
 	else
 		pr_err("LEB %-7d free %-8d dirty %-8d used %-8d free + dirty %-8d dark %-4d dead %-4d nodes fit %-3d flags %#-4x (",
-		       lp->lnum, lp->free, lp->dirty, c->leb_size - spc, spc,
+		       lp->lnum, lp->free, lp->dirty, ubifs_leb_size(c, lp->lnum) - spc, spc,
 		       dark, dead, (int)(spc / UBIFS_MAX_NODE_SZ), lp->flags);
 
 	if (lp->flags & LPROPS_TAKEN) {
@@ -2632,6 +2632,22 @@ int dbg_leb_map(struct ubifs_info *c, int lnum)
 	if (power_cut_emulated(c, lnum, 0))
 		return -EROFS;
 	err = ubi_leb_map(c->ubi, lnum);
+	if (err)
+		return err;
+	if (power_cut_emulated(c, lnum, 0))
+		return -EROFS;
+	return 0;
+}
+
+int dbg_secure_leb_map(struct ubifs_info *c, int lnum)
+{
+	int err;
+
+	if (c->dbg->pc_happened)
+		return -EROFS;
+	if (power_cut_emulated(c, lnum, 0))
+		return -EROFS;
+	err = ubi_secure_leb_map(c->ubi, lnum);
 	if (err)
 		return err;
 	if (power_cut_emulated(c, lnum, 0))

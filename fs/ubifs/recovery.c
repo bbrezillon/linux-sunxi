@@ -110,22 +110,22 @@ static int get_master_node(const struct ubifs_info *c, int lnum, void **pbuf,
 			   struct ubifs_mst_node **mst, void **cor)
 {
 	const int sz = c->mst_node_alsz;
-	int err, offs, len;
+	int err, offs, len, leb_size = ubifs_leb_size(c, lnum);
 	void *sbuf, *buf;
 
-	sbuf = vmalloc(c->leb_size);
+	sbuf = vmalloc(leb_size);
 	if (!sbuf)
 		return -ENOMEM;
 
-	err = ubifs_leb_read(c, lnum, sbuf, 0, c->leb_size, 0);
+	err = ubifs_leb_read(c, lnum, sbuf, 0, leb_size, 0);
 	if (err && err != -EBADMSG)
 		goto out_free;
 
 	/* Find the first position that is definitely not a node */
 	offs = 0;
 	buf = sbuf;
-	len = c->leb_size;
-	while (offs + UBIFS_MST_NODE_SZ <= c->leb_size) {
+	len = leb_size;
+	while (offs + UBIFS_MST_NODE_SZ <= leb_size) {
 		struct ubifs_ch *ch = buf;
 
 		if (le32_to_cpu(ch->magic) != UBIFS_NODE_MAGIC)
@@ -169,7 +169,7 @@ static int get_master_node(const struct ubifs_info *c, int lnum, void **pbuf,
 		}
 	}
 	/* Check for corruption */
-	if (offs < c->leb_size) {
+	if (offs < leb_size) {
 		if (!is_empty(buf, min_t(int, len, sz))) {
 			*cor = buf;
 			dbg_rcvry("found corruption at %d:%d", lnum, offs);
@@ -179,7 +179,7 @@ static int get_master_node(const struct ubifs_info *c, int lnum, void **pbuf,
 		len  -= sz;
 	}
 	/* Check remaining empty space */
-	if (offs < c->leb_size)
+	if (offs < leb_size)
 		if (!is_empty(buf, len))
 			goto out_err;
 	*pbuf = sbuf;
@@ -402,6 +402,7 @@ int ubifs_write_rcvrd_mst_node(struct ubifs_info *c)
 /**
  * is_last_write - determine if an offset was in the last write to a LEB.
  * @c: UBIFS file-system description object
+ * @lnum: LEB number
  * @buf: buffer to check
  * @offs: offset to check
  *
@@ -410,7 +411,8 @@ int ubifs_write_rcvrd_mst_node(struct ubifs_info *c)
  * for subsequent empty space starting from the next @c->max_write_size
  * boundary.
  */
-static int is_last_write(const struct ubifs_info *c, void *buf, int offs)
+static int is_last_write(const struct ubifs_info *c, int lnum, void *buf,
+			 int offs)
 {
 	int empty_offs, check_len;
 	uint8_t *p;
@@ -420,7 +422,7 @@ static int is_last_write(const struct ubifs_info *c, void *buf, int offs)
 	 * the last wbuf written. After that should be empty space.
 	 */
 	empty_offs = ALIGN(offs + 1, c->max_write_size);
-	check_len = c->leb_size - empty_offs;
+	check_len = ubifs_leb_size(c, lnum) - empty_offs;
 	p = buf + empty_offs - offs;
 	return is_empty(p, check_len);
 }
@@ -442,7 +444,6 @@ static void clean_buf(const struct ubifs_info *c, void **buf, int lnum,
 {
 	int empty_offs, pad_len;
 
-	lnum = lnum;
 	dbg_rcvry("cleaning corruption at %d:%d", lnum, *offs);
 
 	ubifs_assert(!(*offs & 7));
@@ -452,7 +453,7 @@ static void clean_buf(const struct ubifs_info *c, void **buf, int lnum,
 	*offs += pad_len;
 	*buf += pad_len;
 	*len -= pad_len;
-	memset(*buf, 0xff, c->leb_size - empty_offs);
+	memset(*buf, 0xff, ubifs_leb_size(c, lnum) - empty_offs);
 }
 
 /**
@@ -634,7 +635,8 @@ static void drop_last_node(struct ubifs_scan_leb *sleb, int *offs)
 struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
 					 int offs, void *sbuf, int jhead)
 {
-	int ret = 0, err, len = c->leb_size - offs, start = offs, min_io_unit;
+	int ret = 0, err, leb_size = ubifs_leb_size(c, lnum);
+	int len = leb_size - offs, start = offs, min_io_unit;
 	int grouped = jhead == -1 ? 0 : c->jheads[jhead].grouped;
 	struct ubifs_scan_leb *sleb;
 	void *buf = sbuf + offs;
@@ -689,13 +691,13 @@ struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
 	}
 
 	if (ret == SCANNED_GARBAGE || ret == SCANNED_A_BAD_PAD_NODE) {
-		if (!is_last_write(c, buf, offs))
+		if (!is_last_write(c, lnum, buf, offs))
 			goto corrupted_rescan;
 	} else if (ret == SCANNED_A_CORRUPT_NODE) {
 		if (!no_more_nodes(c, buf, len, lnum, offs))
 			goto corrupted_rescan;
 	} else if (!is_empty(buf, len)) {
-		if (!is_last_write(c, buf, offs)) {
+		if (!is_last_write(c, lnum, buf, offs)) {
 			int corruption = first_non_ff(buf, len);
 
 			/*
@@ -775,7 +777,7 @@ struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
 	}
 
 	buf = sbuf + offs;
-	len = c->leb_size - offs;
+	len = leb_size - offs;
 
 	clean_buf(c, &buf, lnum, &offs, &len);
 	ubifs_end_scan(c, sleb, lnum, offs);
@@ -818,7 +820,7 @@ static int get_cs_sqnum(struct ubifs_info *c, int lnum, int offs,
 	cs_node = kmalloc(UBIFS_CS_NODE_SZ, GFP_KERNEL);
 	if (!cs_node)
 		return -ENOMEM;
-	if (c->leb_size - offs < UBIFS_CS_NODE_SZ)
+	if (ubifs_leb_size(c, lnum) - offs < UBIFS_CS_NODE_SZ)
 		goto out_err;
 	err = ubifs_leb_read(c, lnum, (void *)cs_node, offs,
 			     UBIFS_CS_NODE_SZ, 0);
@@ -923,10 +925,10 @@ struct ubifs_scan_leb *ubifs_recover_log_leb(struct ubifs_info *c, int lnum,
  */
 static int recover_head(struct ubifs_info *c, int lnum, int offs, void *sbuf)
 {
-	int len = c->max_write_size, err;
+	int len = c->max_write_size, err, leb_size = ubifs_leb_size(c, lnum);
 
-	if (offs + len > c->leb_size)
-		len = c->leb_size - offs;
+	if (offs + len > leb_size)
+		len = leb_size - offs;
 
 	if (!len)
 		return 0;
@@ -1176,7 +1178,7 @@ int ubifs_rcvry_gc_commit(struct ubifs_info *c)
 	dbg_rcvry("GC head LEB %d, offs %d", wbuf->lnum, wbuf->offs);
 
 	c->gc_lnum = -1;
-	if (wbuf->lnum == -1 || wbuf->offs == c->leb_size)
+	if (wbuf->lnum == -1 || wbuf->offs == ubifs_leb_size(c, wbuf->lnum))
 		return grab_empty_leb(c);
 
 	err = ubifs_find_dirty_leb(c, &lp, wbuf->offs, 2);
@@ -1417,7 +1419,7 @@ static int fix_size_in_place(struct ubifs_info *c, struct size_entry *e)
 	struct ubifs_ino_node *ino = c->sbuf;
 	unsigned char *p;
 	union ubifs_key key;
-	int err, lnum, offs, len;
+	int err, lnum, offs, len, leb_size;
 	loff_t i_size;
 	uint32_t crc;
 
@@ -1434,7 +1436,8 @@ static int fix_size_in_place(struct ubifs_info *c, struct size_entry *e)
 	if (i_size >= e->d_size)
 		return 0;
 	/* Read the LEB */
-	err = ubifs_leb_read(c, lnum, c->sbuf, 0, c->leb_size, 1);
+	leb_size = ubifs_leb_size(c, lnum);
+	err = ubifs_leb_read(c, lnum, c->sbuf, 0, leb_size, 1);
 	if (err)
 		goto out;
 	/* Change the size field and recalculate the CRC */
@@ -1445,7 +1448,7 @@ static int fix_size_in_place(struct ubifs_info *c, struct size_entry *e)
 	ino->ch.crc = cpu_to_le32(crc);
 	/* Work out where data in the LEB ends and free space begins */
 	p = c->sbuf;
-	len = c->leb_size - 1;
+	len = leb_size - 1;
 	while (p[len] == 0xff)
 		len -= 1;
 	len = ALIGN(len + 1, c->min_io_size);

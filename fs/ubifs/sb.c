@@ -44,12 +44,13 @@
 #define DEFAULT_FANOUT 8
 
 /* Default number of data journal heads */
-#define DEFAULT_JHEADS_CNT 1
+#define DEFAULT_JHEADS_CNT 2
 
 /* Default positions of different LEBs in the main area */
 #define DEFAULT_IDX_LEB  0
 #define DEFAULT_DATA_LEB 1
 #define DEFAULT_GC_LEB   2
+#define DEFAULT_CONSO_LEB 3
 
 /* Default number of LEB numbers in LPT's save table */
 #define DEFAULT_LSAVE_CNT 256
@@ -169,6 +170,7 @@ static int create_default_filesystem(struct ubifs_info *c)
 	sup->flags         = cpu_to_le32(sup_flags);
 	sup->min_io_size   = cpu_to_le32(c->min_io_size);
 	sup->leb_size      = cpu_to_le32(c->leb_size);
+	sup->unsecure_leb_size = cpu_to_le32(c->unsecure_leb_size);
 	sup->leb_cnt       = cpu_to_le32(c->leb_cnt);
 	sup->max_leb_cnt   = cpu_to_le32(c->max_leb_cnt);
 	sup->max_bud_bytes = cpu_to_le64(tmp64);
