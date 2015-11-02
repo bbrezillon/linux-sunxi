@@ -249,6 +249,14 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 		goto out_acc;
 	}
 
+	vol->secure_lebs = kzalloc(DIV_ROUND_UP(vol->reserved_pebs,
+						BITS_PER_LONG) * sizeof(long),
+				   GFP_KERNEL);
+	if (!vol->secure_lebs) {
+		err = -ENOMEM;
+		goto out_mapping;
+	}
+
 	for (i = 0; i < vol->reserved_pebs; i++)
 		vol->eba_tbl[i] = UBI_LEB_UNMAPPED;
 
@@ -330,8 +338,10 @@ out_sysfs:
 out_cdev:
 	cdev_del(&vol->cdev);
 out_mapping:
-	if (do_free)
+	if (do_free) {
 		kfree(vol->eba_tbl);
+		kfree(vol->secure_lebs);
+	}
 out_acc:
 	spin_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= vol->reserved_pebs;
