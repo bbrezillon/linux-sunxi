@@ -79,10 +79,10 @@ static void do_calc_lpt_geom(struct ubifs_info *c)
 		c->nnode_cnt += n;
 	}
 
-	c->space_bits = fls(c->leb_size) - 3;
+	c->space_bits = fls(c->unsecure_leb_size) - 3;
 	c->lpt_lnum_bits = fls(c->lpt_lebs);
-	c->lpt_offs_bits = fls(c->leb_size - 1);
-	c->lpt_spc_bits = fls(c->leb_size);
+	c->lpt_offs_bits = fls(c->unsecure_leb_size - 1);
+	c->lpt_spc_bits = fls(c->unsecure_leb_size);
 
 	n = DIV_ROUND_UP(c->max_leb_cnt, UBIFS_LPT_FANOUT);
 	c->pcnt_bits = fls(n - 1);
@@ -1042,9 +1042,10 @@ static int unpack_ltab(const struct ubifs_info *c, void *buf)
 	for (i = 0; i < c->lpt_lebs; i++) {
 		int free = ubifs_unpack_bits(&addr, &pos, c->lpt_spc_bits);
 		int dirty = ubifs_unpack_bits(&addr, &pos, c->lpt_spc_bits);
+		int leb_size = ubifs_leb_size(c, i);
 
-		if (free < 0 || free > c->leb_size || dirty < 0 ||
-		    dirty > c->leb_size || free + dirty > c->leb_size)
+		if (free < 0 || free > leb_size || dirty < 0 ||
+		    dirty > leb_size || free + dirty > leb_size)
 			return -EINVAL;
 
 		c->ltab[i].free = free;

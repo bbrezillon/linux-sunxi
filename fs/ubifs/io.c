@@ -155,6 +155,10 @@ int ubifs_leb_change(struct ubifs_info *c, int lnum, const void *buf, int len)
 	ubifs_assert(!c->ro_media && !c->ro_mount);
 	if (c->ro_error)
 		return -EROFS;
+
+	if (!ubi_is_mapped(c->ubi, lnum))
+		return ubifs_leb_write(c, lnum, buf, 0, len);
+
 	if (!dbg_is_tst_rcvry(c))
 		err = ubi_leb_change(c->ubi, lnum, buf, len);
 	else
