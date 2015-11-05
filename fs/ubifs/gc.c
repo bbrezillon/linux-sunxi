@@ -88,7 +88,7 @@ static int switch_gc_head(struct ubifs_info *c)
 	       wbuf->lnum, wbuf->offs + wbuf->used, gc_lnum,
 	       c->leb_size - wbuf->offs - wbuf->used);
 
-	err = ubifs_wbuf_sync_nolock(wbuf);
+	err = ubifs_wbuf_sync_nolock(wbuf, true);
 	if (err)
 		return err;
 
@@ -100,7 +100,7 @@ static int switch_gc_head(struct ubifs_info *c)
 	if (err)
 		return err;
 
-	err = ubifs_wbuf_sync_nolock(wbuf);
+	err = ubifs_wbuf_sync_nolock(wbuf, false);
 	if (err)
 		return err;
 
@@ -584,7 +584,7 @@ int ubifs_garbage_collect_leb(struct ubifs_info *c, struct ubifs_lprops *lp)
 			c->gc_lnum = lnum;
 			err = LEB_RETAINED;
 		} else {
-			err = ubifs_wbuf_sync_nolock(wbuf);
+			err = ubifs_wbuf_sync_nolock(wbuf, false);
 			if (err)
 				goto out;
 
@@ -804,7 +804,7 @@ int ubifs_garbage_collect(struct ubifs_info *c, int anyway)
 		ret = -EAGAIN;
 	}
 
-	err = ubifs_wbuf_sync_nolock(wbuf);
+	err = ubifs_wbuf_sync_nolock(wbuf, false);
 	if (!err)
 		err = ubifs_leb_unmap(c, c->gc_lnum);
 	if (err) {
@@ -818,7 +818,7 @@ out_unlock:
 out:
 	ubifs_assert(ret < 0);
 	ubifs_assert(ret != -ENOSPC && ret != -EAGAIN);
-	ubifs_wbuf_sync_nolock(wbuf);
+	ubifs_wbuf_sync_nolock(wbuf, false);
 	ubifs_ro_mode(c, ret);
 	mutex_unlock(&wbuf->io_mutex);
 	ubifs_return_leb(c, lp.lnum);

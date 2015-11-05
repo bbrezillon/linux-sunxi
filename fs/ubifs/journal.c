@@ -114,7 +114,7 @@ static inline void zero_trun_node_unused(struct ubifs_trun_node *trun)
  */
 static int reserve_space(struct ubifs_info *c, int jhead, int len)
 {
-	int err = 0, err1, retries = 0, avail, lnum, offs, squeeze;
+	int err = 0, err1, retries = 0, lnum, offs, squeeze;
 	struct ubifs_wbuf *wbuf = &c->jheads[jhead].wbuf;
 
 	/*
@@ -132,8 +132,7 @@ again:
 		goto out_unlock;
 	}
 
-	avail = c->leb_size - wbuf->offs - wbuf->used;
-	if (wbuf->lnum != -1 && avail >= len)
+	if (wbuf->lnum != -1 && ubifs_wbuf_fit_in_leb(wbuf, len))
 		return 0;
 
 	/*
@@ -181,9 +180,8 @@ again:
 
 	mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
 	dbg_jnl("got LEB %d for jhead %s", lnum, dbg_jhead(jhead));
-	avail = c->leb_size - wbuf->offs - wbuf->used;
 
-	if (wbuf->lnum != -1 && avail >= len) {
+	if (wbuf->lnum != -1 && ubifs_wbuf_fit_in_leb(wbuf, len)) {
 		/*
 		 * Someone else has switched the journal head and we have
 		 * enough space now. This happens when more than one process is
@@ -208,7 +206,7 @@ out:
 	 * (@wbuf->lnum). And the effect would be that the recovery would see
 	 * that there is corruption in the next-to-last bud.
 	 */
-	err = ubifs_wbuf_sync_nolock(wbuf);
+	err = ubifs_wbuf_sync_nolock(wbuf, true);
 	if (err)
 		goto out_return;
 	err = ubifs_add_bud_to_log(c, jhead, lnum, offs);
@@ -300,7 +298,7 @@ static int write_head(struct ubifs_info *c, int jhead, void *buf, int len,
 	if (err)
 		return err;
 	if (sync)
-		err = ubifs_wbuf_sync_nolock(wbuf);
+		err = ubifs_wbuf_sync_nolock(wbuf, false);
 	return err;
 }
 
