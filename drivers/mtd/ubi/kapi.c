@@ -862,3 +862,189 @@ int ubi_unregister_volume_notifier(struct notifier_block *nb)
 	return blocking_notifier_chain_unregister(&ubi_notifiers, nb);
 }
 EXPORT_SYMBOL_GPL(ubi_unregister_volume_notifier);
+
+struct ubi_wptr *ubi_wptr_create(struct ubi_volume_desc *desc)
+{
+	struct ubi_volume *vol = desc->vol;
+	struct ubi_wptr *ptr;
+	int skipsize, nwunit;
+
+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	nwunit = mtd_wunit_per_eb(vol->ubi->mtd);
+	skipsize = DIV_ROUND_UP(nwunit, sizeof(*ptr->skip));
+	ptr->skip = kzalloc(skipsize, GFP_KERNEL);
+	if (!ptr->skip) {
+		kfree(ptr);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	return ptr;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_create);
+
+void ubi_wptr_destroy(struct ubi_wptr *ptr)
+{
+	if (ptr) {
+		kfree(ptr->skip);
+		kfree(ptr);
+	}
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_destroy);
+
+int ubi_wptr_rst(struct ubi_wptr *ptr, int lnum, int wunit)
+{
+	struct ubi_volume *vol = ptr->desc->vol;
+	int skipsize, nwunit;
+
+	nwunit = vol->usable_leb_size / vol->ubi->min_io_size;
+	skipsize = DIV_ROUND_UP(nwunit, sizeof(*ptr->skip));
+
+	memset(ptr->skip, 0, skipsize);
+	ptr->lnum = lnum;
+	ptr->first_wunit = ptr->cur_wunit = wunit;
+	ptr->next_wunit = ptr->next_contiguous_wunit = wunit;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_rst);
+
+void ubi_wptr_start(struct ubi_wptr *ptr)
+{
+	ptr->first_wunit = ptr->cur_wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_start);
+
+void ubi_wptr_move(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit >= ptr->cur_wunit);
+	ubi_assert(wunit <= max_wunit);
+	ubi_assert(!test_bit(wunit, ptr->skip));
+
+	ptr->cur_wunit = wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_move);
+
+int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit)
+{
+	ubi_assert(wunit >= ptr->next_wunit);
+	ubi_assert(wunit < ptr->next_contiguous_wunit);
+
+	return !test_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_should_be_filled);
+
+int ubi_wptr_skipped(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit > ptr->cur_wunit);
+	ubi_assert(wunit < max_wunit);
+
+	return test_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skipped);
+
+void ubi_wptr_skip(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit > ptr->cur_wunit);
+	ubi_assert(wunit < max_wunit);
+
+	set_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skip);
+
+int ubi_wptr_secure(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	struct mtd_info *mtd = ubi->mtd;
+	int min_io_size = ubi->min_io_size;
+	int max_wunit = ubi->leb_size / min_io_size;
+	int leb_start_wunit = ubi->leb_start / min_io_size;
+	int i, ret;
+
+	for (i = ptr->first_wunit; i <= ptr->cur_wunit; i++) {
+		struct nand_pairing_info info;
+
+		/* The write unit has been skipped, test the next one. */
+		if (test_bit(i, ptr->skip))
+			continue;
+
+		ret = mtd_wunit_to_pairing_info(mtd, i + leb_start_wunit,
+						&info);
+		if (ret)
+			return ret;
+
+		for (info.group++; info.group < mtd_pairing_groups_per_eb(mtd);
+		     info.group++) {
+			int wunit = mtd_pairing_info_to_wunit(mtd, &info);
+
+			wunit -= leb_start_wunit;
+			set_bit(wunit, ptr->skip);
+			if (ptr->next_contiguous_wunit < wunit + 1)
+				ptr->next_contiguous_wunit = wunit + 1;
+		}
+	}
+
+	for (; ptr->next_wunit < max_wunit; ptr->next_wunit++) {
+		if (!test_bit(ptr->next_wunit, ptr->skip))
+			break;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_secure);
+
+int ubi_wptr_skip_len(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+	int i;
+
+	for (i = ptr->cur_wunit + 1; i < max_wunit; i++) {
+		if (!test_bit(ptr->cur_wunit, ptr->skip))
+			break;
+	}
+
+	i -= ptr->cur_wunit + 1;
+
+	return i * ubi->min_io_size;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skip_len);
+
+int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit)
+{
+	struct ubi_device *ubi = desc->vol->ubi;
+	struct mtd_info *mtd = ubi->mtd;
+	int min_io_size = ubi->min_io_size;
+	int max_wunit = ubi->leb_size / min_io_size;
+	int leb_start_wunit = ubi->leb_start / min_io_size;
+	struct nand_pairing_info info;
+	int ret;
+
+	ubi_assert(wunit < max_wunit);
+
+	if (mtd_pairing_groups_per_eb(mtd) == 1)
+		return wunit;
+
+	ret = mtd_wunit_to_pairing_info(mtd, wunit + leb_start_wunit, &info);
+	if (ret)
+		return ret;
+
+	if (info.group == mtd_pairing_groups_per_eb(mtd) - 1)
+		return wunit;
+
+	info.group = mtd_pairing_groups_per_eb(mtd);
+
+	return mtd_pairing_info_to_wunit(mtd, &info);
+}
+EXPORT_SYMBOL_GPL(ubi_next_wunit_paired_with);

@@ -231,6 +231,16 @@ struct ubi_notification {
 	struct ubi_volume_info vi;
 };
 
+struct ubi_wptr {
+	struct ubi_volume_desc *desc;
+	int lnum;
+	int first_wunit;
+	int cur_wunit;
+	int next_contiguous_wunit;
+	int next_wunit;
+	unsigned long *skip;
+};
+
 /* UBI descriptor given to users when they open UBI volumes */
 struct ubi_volume_desc;
 
@@ -261,6 +271,18 @@ int ubi_leb_map(struct ubi_volume_desc *desc, int lnum);
 int ubi_is_mapped(struct ubi_volume_desc *desc, int lnum);
 int ubi_sync(int ubi_num);
 int ubi_flush(int ubi_num, int vol_id, int lnum);
+
+struct ubi_wptr *ubi_wptr_create(struct ubi_volume_desc *desc);
+void ubi_wptr_destroy(struct ubi_wptr *ptr);
+int ubi_wptr_rst(struct ubi_wptr *ptr, int lnum, int wunit);
+void ubi_wptr_start(struct ubi_wptr *ptr);
+void ubi_wptr_move(struct ubi_wptr *ptr, int wunit);
+int ubi_wptr_secure(struct ubi_wptr *ptr);
+int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit);
+int ubi_wptr_skipped(struct ubi_wptr *ptr, int wunit);
+void ubi_wptr_skip(struct ubi_wptr *ptr, int wunit);
+int ubi_wptr_skip_len(struct ubi_wptr *ptr);
+int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit);
 
 /*
  * This function is the same as the 'ubi_leb_read()' function, but it does not
