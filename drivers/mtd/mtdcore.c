@@ -373,6 +373,44 @@ static int mtd_reboot_notifier(struct notifier_block *n, unsigned long state,
 	return NOTIFY_DONE;
 }
 
+int mtd_wunit_to_pairing_info(struct mtd_info *mtd, int wunit,
+			      struct nand_pairing_info *info)
+{
+	if (!mtd->pairing || !mtd->pairing->get_info) {
+		info->group = 0;
+		info->pair = wunit;
+		return 0;
+	}
+
+	mtd->pairing->get_info(mtd, wunit, info);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtd_wunit_to_pairing_info);
+
+int mtd_pairing_info_to_wunit(struct mtd_info *mtd,
+			      const struct nand_pairing_info *info)
+{
+	if (!mtd->pairing || !mtd->pairing->get_info) {
+		if (info->group)
+			return -EINVAL;
+
+		return info->pair;
+	}
+
+	return mtd->pairing->get_wunit(mtd, info);
+}
+EXPORT_SYMBOL_GPL(mtd_pairing_info_to_wunit);
+
+int mtd_pairing_groups_per_eb(struct mtd_info *mtd)
+{
+	if (!mtd->pairing || !mtd->pairing->ngroups)
+		return 1;
+
+	return mtd->pairing->ngroups;
+}
+EXPORT_SYMBOL_GPL(mtd_pairing_groups_per_eb);
+
 /**
  *	add_mtd_device - register an MTD device
  *	@mtd: pointer to new MTD device info structure
