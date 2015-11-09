@@ -204,6 +204,7 @@ CLK_OF_DECLARE(sun4i_a10_pll2, "allwinner,sun4i-a10-pll2-clk",
 	       sun4i_a10_pll2_setup);
 
 static struct sun4i_pll2_data sun5i_a13_pll2_data = {
+	.pre_div_flags		= CLK_DIVIDER_ONE_BASED | CLK_DIVIDER_ALLOW_ZERO,
 	.post_div_offset	= 1,
 };
 
