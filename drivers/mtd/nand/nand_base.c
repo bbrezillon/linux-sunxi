@@ -3836,6 +3836,7 @@ static bool find_full_id_nand(struct mtd_info *mtd, struct nand_chip *chip,
 		mtd->writesize = type->pagesize;
 		mtd->erasesize = type->erasesize;
 		mtd->oobsize = type->oobsize;
+		mtd->pairing = type->pairing;
 
 		chip->bits_per_cell = nand_get_bits_per_cell(id_data[2]);
 		chip->chipsize = (uint64_t)type->chipsize << 20;
@@ -4197,6 +4198,7 @@ static int nand_pairing_dist3_get_wunit(struct mtd_info *mtd,
 }
 
 const struct nand_pairing_scheme dist3_pairing_scheme = {
+	.ngroups = 2,
 	.get_info = nand_pairing_dist3_get_info,
 	.get_wunit = nand_pairing_dist3_get_wunit,
 };
@@ -4240,6 +4242,7 @@ static int nand_pairing_dist6_get_wunit(struct mtd_info *mtd,
 }
 
 const struct nand_pairing_scheme dist6_pairing_scheme = {
+	.ngroups = 2,
 	.get_info = nand_pairing_dist6_get_info,
 	.get_wunit = nand_pairing_dist6_get_wunit,
 };

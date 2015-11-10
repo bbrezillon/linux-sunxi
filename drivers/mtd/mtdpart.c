@@ -402,6 +402,7 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 	slave->mtd.oobavail = master->oobavail;
 	slave->mtd.subpage_sft = master->subpage_sft;
 	slave->mtd.slc_mode_ratio = master->slc_mode_ratio;
+	slave->mtd.pairing = master->pairing;
 
 	slave->mtd.name = name;
 	slave->mtd.owner = master->owner;
