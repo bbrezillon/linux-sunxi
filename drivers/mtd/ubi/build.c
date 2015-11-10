@@ -719,6 +719,15 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 	/* Similar for the data offset */
 	ubi->leb_start = ubi->vid_hdr_offset + UBI_VID_HDR_SIZE;
 	ubi->leb_start = ALIGN(ubi->leb_start, ubi->min_io_size);
+	if (mtd_pairing_groups_per_eb(ubi->mtd)) {
+		struct nand_pairing_info pairing_info;
+		int wunit = (ubi->leb_start - 1) / ubi->min_io_size;
+
+		mtd_wunit_to_pairing_info(ubi->mtd, wunit, &pairing_info);
+		pairing_info.group = mtd_pairing_groups_per_eb(ubi->mtd) - 1;
+		wunit = mtd_pairing_info_to_wunit(ubi->mtd, &pairing_info);
+		ubi->leb_start = ubi->min_io_size * wunit + 1;
+	}
 
 	dbg_gen("vid_hdr_offset   %d", ubi->vid_hdr_offset);
 	dbg_gen("vid_hdr_aloffset %d", ubi->vid_hdr_aloffset);
