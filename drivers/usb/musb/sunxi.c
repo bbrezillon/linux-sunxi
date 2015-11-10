@@ -623,6 +623,11 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 		pdata.mode = MUSB_PORT_MODE_HOST;
 		break;
 #endif
+#if defined CONFIG_USB_MUSB_DUAL_ROLE || defined CONFIG_USB_MUSB_PERIPHERAL
+	case USB_DR_MODE_PERIPHERAL:
+		pdata.mode = MUSB_PORT_MODE_GADGET;
+		break;
+#endif
 #ifdef CONFIG_USB_MUSB_DUAL_ROLE
 	case USB_DR_MODE_OTG:
 		glue->extcon = extcon_get_edev_by_phandle(&pdev->dev, 0);
