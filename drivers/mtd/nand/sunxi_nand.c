@@ -1290,13 +1290,6 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 	/* TODO: A83 has some more bits for CDQSS, CS, CLHZ, CCS, WC */
 	chip->timing_cfg = NFC_TIMING_CFG(tWB, tADL, tWHR, tRHW, tCAD);
 
-	/*
-	 * ONFI specification 3.1, paragraph 4.15.2 dictates that EDO data
-	 * output cycle timings shall be used if the host drives tRC less than
-	 * 30 ns.
-	 */
-	chip->timing_ctl = (timings->tRC_min < 30000) ? NFC_TIMING_CTL_EDO : 0;
-
 	/* Convert min_clk_period from picoseconds to nanoseconds */
 	min_clk_period = DIV_ROUND_UP(min_clk_period, 1000);
 
@@ -1306,7 +1299,16 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 	 * (specified in the datasheet):
 	 * nand clk_rate = 2 * min_clk_rate
 	 */
-	chip->clk_rate = (2 * NSEC_PER_SEC) / min_clk_period;
+	chip->clk_rate = clk_round_rate(nfc->mod_clk,
+					(2 * NSEC_PER_SEC) / min_clk_period);
+	/*
+	 * ONFI specification 3.1, paragraph 4.15.2 dictates that EDO data
+	 * output cycle timings shall be used if the host drives tRC less than
+	 * 30 ns.
+	 */
+	min_clk_period = (2 * NSEC_PER_SEC) / chip->clk_rate;
+	chip->timing_ctl = ((min_clk_period * 2) < 30000) ?
+			   NFC_TIMING_CTL_EDO : 0;
 
 	return 0;
 }
