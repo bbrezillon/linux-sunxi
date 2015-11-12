@@ -3838,6 +3838,9 @@ static bool find_full_id_nand(struct mtd_info *mtd, struct nand_chip *chip,
 		mtd->oobsize = type->oobsize;
 		mtd->pairing = type->pairing;
 
+		pr_info("%s:%i mtd->pairing = %p\n", __func__, __LINE__,
+			mtd->pairing);
+
 		chip->bits_per_cell = nand_get_bits_per_cell(id_data[2]);
 		chip->chipsize = (uint64_t)type->chipsize << 20;
 		chip->options |= type->options;
@@ -3908,8 +3911,10 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 
 	for (; type->name != NULL; type++) {
 		if (is_full_id_nand(type)) {
-			if (find_full_id_nand(mtd, chip, type, id_data, &busw))
+			if (find_full_id_nand(mtd, chip, type, id_data, &busw)) {
+
 				goto ident_done;
+			}
 		} else if (*dev_id == type->dev_id) {
 			break;
 		}

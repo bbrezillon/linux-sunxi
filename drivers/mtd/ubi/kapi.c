@@ -881,6 +881,8 @@ struct ubi_wptr *ubi_wptr_create(struct ubi_volume_desc *desc)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ptr->desc = desc;
+
 	return ptr;
 }
 EXPORT_SYMBOL_GPL(ubi_wptr_create);
@@ -903,9 +905,7 @@ int ubi_wptr_rst(struct ubi_wptr *ptr, int lnum, int wunit)
 	skipsize = DIV_ROUND_UP(nwunit, sizeof(*ptr->skip));
 
 	memset(ptr->skip, 0, skipsize);
-	ptr->lnum = lnum;
 	ptr->first_wunit = ptr->cur_wunit = wunit;
-	ptr->next_wunit = ptr->next_contiguous_wunit = wunit;
 
 	return 0;
 }
@@ -916,6 +916,35 @@ void ubi_wptr_start(struct ubi_wptr *ptr)
 	ptr->first_wunit = ptr->cur_wunit;
 }
 EXPORT_SYMBOL_GPL(ubi_wptr_start);
+
+int ubi_wptr_next_wunit(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+	int wunit;
+
+	for (wunit = ptr->cur_wunit + 1; wunit < max_wunit; wunit++) {
+		if (!test_bit(wunit, ptr->skip))
+			break;
+	}
+
+	return wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_next_wunit);
+
+int ubi_wptr_next_contiguous_wunit(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+	int wunit;
+
+	wunit = find_last_bit(ptr->skip, max_wunit);
+	if (wunit < max_wunit)
+		wunit++;
+
+	return wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_next_contiguous_wunit);
 
 void ubi_wptr_move(struct ubi_wptr *ptr, int wunit)
 {
@@ -932,9 +961,6 @@ EXPORT_SYMBOL_GPL(ubi_wptr_move);
 
 int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit)
 {
-	ubi_assert(wunit >= ptr->next_wunit);
-	ubi_assert(wunit < ptr->next_contiguous_wunit);
-
 	return !test_bit(wunit, ptr->skip);
 }
 EXPORT_SYMBOL_GPL(ubi_wptr_should_be_filled);
@@ -968,7 +994,6 @@ int ubi_wptr_secure(struct ubi_wptr *ptr)
 	struct ubi_device *ubi = ptr->desc->vol->ubi;
 	struct mtd_info *mtd = ubi->mtd;
 	int min_io_size = ubi->min_io_size;
-	int max_wunit = ubi->leb_size / min_io_size;
 	int leb_start_wunit = ubi->leb_start / min_io_size;
 	int i, ret;
 
@@ -990,14 +1015,7 @@ int ubi_wptr_secure(struct ubi_wptr *ptr)
 
 			wunit -= leb_start_wunit;
 			set_bit(wunit, ptr->skip);
-			if (ptr->next_contiguous_wunit < wunit + 1)
-				ptr->next_contiguous_wunit = wunit + 1;
 		}
-	}
-
-	for (; ptr->next_wunit < max_wunit; ptr->next_wunit++) {
-		if (!test_bit(ptr->next_wunit, ptr->skip))
-			break;
 	}
 
 	return 0;
@@ -1007,17 +1025,9 @@ EXPORT_SYMBOL_GPL(ubi_wptr_secure);
 int ubi_wptr_skip_len(struct ubi_wptr *ptr)
 {
 	struct ubi_device *ubi = ptr->desc->vol->ubi;
-	int max_wunit = ubi->leb_size / ubi->min_io_size;
-	int i;
 
-	for (i = ptr->cur_wunit + 1; i < max_wunit; i++) {
-		if (!test_bit(ptr->cur_wunit, ptr->skip))
-			break;
-	}
-
-	i -= ptr->cur_wunit + 1;
-
-	return i * ubi->min_io_size;
+	return (ubi_wptr_next_wunit(ptr) - ptr->cur_wunit - 1) *
+	       ubi->min_io_size;
 }
 EXPORT_SYMBOL_GPL(ubi_wptr_skip_len);
 

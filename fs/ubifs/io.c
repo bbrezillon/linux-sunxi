@@ -319,6 +319,7 @@ void ubifs_pad(const struct ubifs_info *c, void *buf, int pad)
 {
 	uint32_t crc;
 
+	pr_info("%s:%i pda = %d\n", __func__, __LINE__, pad);
 	ubifs_assert(pad >= 0 && !(pad & 7));
 
 	if (pad >= UBIFS_PAD_NODE_SZ) {
@@ -489,7 +490,7 @@ static int ubifs_wbuf_search_contiguous(struct ubifs_wbuf *wbuf, int len)
 	 * which ends at the end of the LEB.
 	 */
 	if (len < 0)
-		return wptr->next_contiguous_wunit * c->min_io_size;
+		return ubi_wptr_next_contiguous_wunit(wptr) * c->min_io_size;
 
 	avail = wbuf->avail;
 	wunit = wptr->cur_wunit + 1;
@@ -523,7 +524,8 @@ static int ubifs_wbuf_fill_skipped_wunits(struct ubifs_wbuf *wbuf)
 	struct ubifs_info *c = wbuf->c;
 	int i, init_done = 0, err = 0;
 
-	for (i = wptr->next_wunit; i < wptr->next_contiguous_wunit; i++) {
+	for (i = ubi_wptr_next_wunit(wptr);
+	     i < ubi_wptr_next_contiguous_wunit(wptr); i++) {
 		if (!ubi_wptr_should_be_filled(wptr, i))
 			continue;
 
@@ -603,10 +605,12 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf, bool contiguous)
 	 */
 	sync_len = ALIGN(wbuf->used, c->min_io_size);
 	if (contiguous)
-		next_wunit = wptr->next_contiguous_wunit;
+		next_wunit = ubi_wptr_next_contiguous_wunit(wptr);
 	else
-		next_wunit = wptr->next_wunit;
+		next_wunit = ubi_wptr_next_wunit(wptr);
 
+	pr_info("%s:%i cur_unit = %d next_wunit = %d\n", __func__, __LINE__,
+		wptr->cur_wunit, next_wunit);
 	offs = next_wunit * c->min_io_size;
 	dirt = offs - wbuf->offs - wbuf->used;
 	if (dirt)
@@ -795,6 +799,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	       dbg_ntype(((struct ubifs_ch *)buf)->node_type),
 	       dbg_jhead(wbuf->jhead), wbuf->lnum, wbuf->offs + wbuf->used);
 	ubifs_assert(len > 0 && wbuf->lnum >= 0 && wbuf->lnum < c->leb_cnt);
+	pr_info("%s:%i wbuf->offs = %d\n", __func__, __LINE__, wbuf->offs);
 	ubifs_assert(wbuf->offs >= 0 && wbuf->offs % c->min_io_size == 0);
 	ubifs_assert(!(wbuf->offs & 7) && wbuf->offs <= c->leb_size);
 	ubifs_assert(wbuf->avail > 0 && wbuf->avail <= wbuf->size);
@@ -892,7 +897,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		 * all skipped pages that need to be filled (ie. those not
 		 * marked as skipped in the skip table).
 		 */
-		if (wptr->next_contiguous_wunit == next_wunit) {
+		if (ubi_wptr_next_contiguous_wunit(wptr) == next_wunit) {
 			err = ubifs_wbuf_fill_skipped_wunits(wbuf);
 			if (err)
 				goto out;

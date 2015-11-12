@@ -233,11 +233,8 @@ struct ubi_notification {
 
 struct ubi_wptr {
 	struct ubi_volume_desc *desc;
-	int lnum;
 	int first_wunit;
 	int cur_wunit;
-	int next_contiguous_wunit;
-	int next_wunit;
 	unsigned long *skip;
 };
 
@@ -282,6 +279,8 @@ int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit);
 int ubi_wptr_skipped(struct ubi_wptr *ptr, int wunit);
 void ubi_wptr_skip(struct ubi_wptr *ptr, int wunit);
 int ubi_wptr_skip_len(struct ubi_wptr *ptr);
+int ubi_wptr_next_wunit(struct ubi_wptr *ptr);
+int ubi_wptr_next_contiguous_wunit(struct ubi_wptr *ptr);
 int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit);
 
 /*

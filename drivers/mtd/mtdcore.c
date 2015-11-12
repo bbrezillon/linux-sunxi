@@ -382,6 +382,7 @@ int mtd_wunit_to_pairing_info(struct mtd_info *mtd, int wunit,
 		return 0;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	mtd->pairing->get_info(mtd, wunit, info);
 
 	return 0;
@@ -397,6 +398,7 @@ int mtd_pairing_info_to_wunit(struct mtd_info *mtd,
 
 		return info->pair;
 	}
+	pr_info("%s:%i\n", __func__, __LINE__);
 
 	return mtd->pairing->get_wunit(mtd, info);
 }
@@ -407,6 +409,7 @@ int mtd_pairing_groups_per_eb(struct mtd_info *mtd)
 	if (!mtd->pairing || !mtd->pairing->ngroups)
 		return 1;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	return mtd->pairing->ngroups;
 }
 EXPORT_SYMBOL_GPL(mtd_pairing_groups_per_eb);

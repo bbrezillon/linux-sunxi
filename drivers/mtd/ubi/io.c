@@ -1094,6 +1094,7 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 	void *p;
 
 	dbg_io("write VID header to PEB %d", pnum);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_assert(pnum >= 0 &&  pnum < ubi->peb_count);
 
 	err = self_check_peb_ec_hdr(ubi, pnum);
@@ -1118,6 +1119,7 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 	if (err)
 		return err;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	/* Fill lower pages */
 	for (offs = ubi->vid_hdr_aloffset + ubi->vid_hdr_alsize;
 	     offs < ubi->leb_start; offs += ubi->min_io_size) {
@@ -1130,9 +1132,12 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 		 * Do not write on wunits paired with the one used for the
 		 * EC and VID headers.
 		 */
-		if (pairing_info.pair < 2)
+		if (pairing_info.pair < 2) {
+			pr_info("%s:%i skip %08x\n", __func__, __LINE__, offs);
 			continue;
+		}
 
+		pr_info("%s:%i write @ %08x\n", __func__, __LINE__, offs);
 		err = ubi_io_write(ubi, p, pnum, offs, ubi->min_io_size);
 		if (err)
 			return err;

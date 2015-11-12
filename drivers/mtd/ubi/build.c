@@ -722,9 +722,15 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 		struct nand_pairing_info pairing_info;
 		int wunit = (ubi->leb_start - 1) / ubi->min_io_size;
 
+		pr_info("%s:%i wunit = %d\n", __func__, __LINE__, wunit);
 		mtd_wunit_to_pairing_info(ubi->mtd, wunit, &pairing_info);
+		pr_info("%s:%i group = %d pair = %d\n", __func__, __LINE__,
+			pairing_info.group, pairing_info.pair);
 		pairing_info.group = mtd_pairing_groups_per_eb(ubi->mtd) - 1;
+		pr_info("%s:%i group = %d pair = %d\n", __func__, __LINE__,
+			pairing_info.group, pairing_info.pair);
 		wunit = mtd_pairing_info_to_wunit(ubi->mtd, &pairing_info);
+		pr_info("%s:%i wunit = %d\n", __func__, __LINE__, wunit);
 		ubi->leb_start = ubi->min_io_size * (wunit + 1);
 	}
 
