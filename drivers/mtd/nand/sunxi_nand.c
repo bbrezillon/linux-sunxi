@@ -1273,18 +1273,21 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 		dev_err(nfc->dev, "unsupported tWB\n");
 		return tWB;
 	}
+	pr_info("%s:%i min_clk_period = %u tWB = %lu %lu\n", __func__, __LINE__, min_clk_period, timings->tWB_max, tWB);
 
 	tADL = DIV_ROUND_UP(timings->tADL_min, min_clk_period) >> 3;
 	if (tADL > 3) {
 		dev_err(nfc->dev, "unsupported tADL\n");
 		return -EINVAL;
 	}
+	pr_info("%s:%i min_clk_period = %u tADL = %lu %lu\n", __func__, __LINE__, min_clk_period, timings->tADL_min, tADL);
 
 	tWHR = DIV_ROUND_UP(timings->tWHR_min, min_clk_period) >> 3;
 	if (tWHR > 3) {
 		dev_err(nfc->dev, "unsupported tWHR\n");
 		return -EINVAL;
 	}
+	pr_info("%s:%i min_clk_period = %u tWHR = %lu %lu\n", __func__, __LINE__, min_clk_period, timings->tWHR_min, tWHR);
 
 	tRHW = sunxi_nand_lookup_timing(tRHW_lut, timings->tRHW_min,
 					min_clk_period);
@@ -1292,6 +1295,7 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 		dev_err(nfc->dev, "unsupported tRHW\n");
 		return tRHW;
 	}
+	pr_info("%s:%i min_clk_period = %u tRHW = %lu %lu\n", __func__, __LINE__, min_clk_period, timings->tRHW_min, tRHW);
 
 	/*
 	 * TODO: according to ONFI specs this value only applies for DDR NAND,
@@ -1301,6 +1305,7 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 
 	/* TODO: A83 has some more bits for CDQSS, CS, CLHZ, CCS, WC */
 	chip->timing_cfg = NFC_TIMING_CFG(tWB, tADL, tWHR, tRHW, tCAD);
+	pr_info("%s:%i chip->timing_cfg = %08x\n", __func__, __LINE__, chip->timing_cfg);
 
 	/* Convert min_clk_period from picoseconds to nanoseconds */
 	min_clk_period = DIV_ROUND_UP(min_clk_period, 1000);
@@ -1319,11 +1324,49 @@ static int sunxi_nand_chip_set_timings(struct sunxi_nand_chip *chip,
 	 * 30 ns.
 	 */
 	min_clk_period = (2 * NSEC_PER_SEC) / chip->clk_rate;
-	chip->timing_ctl = ((min_clk_period * 2) < 30000) ?
+	chip->timing_ctl = ((min_clk_period * 2) < 30) ?
 			   NFC_TIMING_CTL_EDO : 0;
+	pr_info("%s:%i min_clk_period = %u clk_rate = %lu\n", __func__, __LINE__, min_clk_period, chip->clk_rate);
 
 	return 0;
 }
+
+static const struct nand_sdr_timings custom_timings = {
+	.tADL_min = 300000,
+	.tALH_min = 5000,
+	.tALS_min = 15000,
+	.tAR_min = 10000,
+	.tCEA_max = 100000,
+	.tCEH_min = 20000,
+	.tCH_min = 5000,
+	.tCHZ_max = 30000,
+	.tCLH_min = 5000,
+	.tCLR_min = 10000,
+	.tCLS_min = 15000,
+	.tCOH_min = 5000,
+	.tCS_min = 50000,
+	.tDH_min = 900,
+	.tDS_min = 900,
+	.tFEAT_max = 1000000,
+	.tIR_min = 10000,
+	.tITC_max = 1000000,
+	.tRC_min = 10000,
+	.tREA_max = 25000,
+	.tREH_min = 5000,
+	.tRHOH_min = 0,
+	.tRHW_min = 200000,
+	.tRHZ_max = 200000,
+	.tRLOH_min = 0,
+	.tRP_min = 5000,
+	.tRST_max = 200000000000ULL,
+	.tWB_max = 100000,
+	.tRR_min = 20000,
+	.tWC_min = 25000,
+	.tWH_min = 11000,
+	.tWHR_min = 300000,
+	.tWP_min = 11000,
+	.tWW_min = 100000,
+};
 
 static int sunxi_nand_chip_init_timings(struct sunxi_nand_chip *chip,
 					struct device_node *np)
@@ -1355,6 +1398,7 @@ static int sunxi_nand_chip_init_timings(struct sunxi_nand_chip *chip,
 		return PTR_ERR(timings);
 
 	return sunxi_nand_chip_set_timings(chip, timings);
+//	return sunxi_nand_chip_set_timings(chip, &custom_timings);
 }
 
 static int sunxi_nand_hw_common_ecc_ctrl_init(struct mtd_info *mtd,
@@ -1660,21 +1704,6 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 			of_property_read_bool(np, "allwinner,randomize");
 	}
 
-	timings = onfi_async_timing_mode_to_sdr_timings(0);
-	if (IS_ERR(timings)) {
-		ret = PTR_ERR(timings);
-		dev_err(dev,
-			"could not retrieve timings for ONFI mode 0: %d\n",
-			ret);
-		return ret;
-	}
-
-	ret = sunxi_nand_chip_set_timings(chip, timings);
-	if (ret) {
-		dev_err(dev, "could not configure chip timings: %d\n", ret);
-		return ret;
-	}
-
 	nand = &chip->nand;
 	/* Default tR value specified in the ONFI spec (chapter 4.15.1) */
 	nand->chip_delay = 200;
@@ -1692,6 +1721,21 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 	mtd->dev.parent = dev;
 	mtd->priv = nand;
 	mtd->owner = THIS_MODULE;
+
+	timings = onfi_async_timing_mode_to_sdr_timings(0);
+	if (IS_ERR(timings)) {
+		ret = PTR_ERR(timings);
+		dev_err(dev,
+			"could not retrieve timings for ONFI mode 0: %d\n",
+			ret);
+		return ret;
+	}
+
+	ret = sunxi_nand_chip_set_timings(chip, timings);
+	if (ret) {
+		dev_err(dev, "could not configure chip timings: %d\n", ret);
+		return ret;
+	}
 
 	ret = nand_scan_ident(mtd, nsels, NULL);
 	if (ret)
