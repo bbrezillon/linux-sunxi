@@ -31,23 +31,23 @@ struct hynix_read_retry {
 };
 
 struct hynix_nand {
-	struct hynix_read_retry read_retry;
+	struct hynix_read_retry *read_retry;
 };
 
 int nand_setup_read_retry_hynix(struct mtd_info *mtd, int retry_mode)
 {
 	struct nand_chip *chip = mtd->priv;
 	struct hynix_nand *hynix = chip->manuf_priv;
-	int offset = retry_mode * hynix->read_retry.nregs;
+	int offset = retry_mode * hynix->read_retry->nregs;
 	int status;
 	int i;
 
 	chip->cmdfunc(mtd, 0x36, -1, -1);
-	for (i = 0; i < hynix->read_retry.nregs; i++) {
-		int column = hynix->read_retry.regs[i];
+	for (i = 0; i < hynix->read_retry->nregs; i++) {
+		int column = hynix->read_retry->regs[i];
 		column |= column << 8;
 		chip->cmdfunc(mtd, NAND_CMD_NONE, column, -1);
-		chip->write_byte(mtd, hynix->read_retry.values[offset + i]);
+		chip->write_byte(mtd, hynix->read_retry->values[offset + i]);
 	}
 	chip->cmdfunc(mtd, 0x16, -1, -1);
 
@@ -61,16 +61,21 @@ int nand_setup_read_retry_hynix(struct mtd_info *mtd, int retry_mode)
 static void h27_cleanup(struct mtd_info *mtd)
 {
 	struct nand_chip *chip = mtd->priv;
-	kfree(chip->manuf_priv);
+	struct hynix_nand *hynix = chip->manuf_priv;
+
+	if (!hynix)
+		return;
+
+	kfree(hynix->read_retry);
 }
 
-static int h27ucg8t2a_init(struct mtd_info *mtd, const uint8_t *id)
+static int h27ucg8t2a_rr_init(struct mtd_info *mtd)
 {
 	struct nand_chip *chip = mtd->priv;
-	struct hynix_nand *hynix;
+	struct hynix_nand *hynix = chip->manuf_priv;
+	struct hynix_read_retry *rr;
 	u8 * buf = NULL;
-	int i, j;
-	int ret;
+	int ret, i, j;
 
 	buf = kzalloc(1024, GFP_KERNEL);
 	if (!buf)
@@ -91,7 +96,7 @@ static int h27ucg8t2a_init(struct mtd_info *mtd, const uint8_t *id)
 	chip->read_buf(mtd, buf, 2);
 	if (buf[0] != 0x8 || buf[1] != 0x8) {
 		ret = -EINVAL;
-		goto leave;
+		goto out;
 	}
 	chip->read_buf(mtd, buf, 1024);
 
@@ -101,7 +106,7 @@ static int h27ucg8t2a_init(struct mtd_info *mtd, const uint8_t *id)
 			u8 *tmp = buf + (128 * j);
 			if ((tmp[i] | tmp[i + 64]) != 0xff) {
 				ret = -EINVAL;
-				goto leave;
+				goto out;
 			}
 		}
 	}
@@ -110,25 +115,40 @@ static int h27ucg8t2a_init(struct mtd_info *mtd, const uint8_t *id)
 	chip->cmdfunc(mtd, 0x38, -1, -1);
 	chip->select_chip(mtd, -1);
 
-	if (!ret) {
-		hynix = kzalloc(sizeof(*hynix) + (8 * 8),
-				GFP_KERNEL);
-		if (!hynix) {
-			ret = -ENOMEM;
-			goto leave;
-		}
-
-		hynix->read_retry.nregs = 8;
-		hynix->read_retry.regs = h27ucg8t2a_read_retry_regs;
-		memcpy(hynix->read_retry.values, buf, 64);
-		chip->manuf_priv = hynix;
-		chip->setup_read_retry = nand_setup_read_retry_hynix;
-		chip->read_retries = 8;
-		chip->manuf_cleanup = h27_cleanup;
+	rr = kzalloc(sizeof(*rr) + (8 * 8), GFP_KERNEL);
+	if (!rr) {
+		ret = -ENOMEM;
+		goto out;
 	}
 
-leave:
+	rr->nregs = 8;
+	rr->regs = h27ucg8t2a_read_retry_regs;
+	memcpy(rr->values, buf, 64);
+	hynix->read_retry = rr;
+	chip->setup_read_retry = nand_setup_read_retry_hynix;
+	chip->read_retries = 8;
+
+out:
 	kfree(buf);
+	return ret;
+}
+
+static int h27ucg8t2a_init(struct mtd_info *mtd, const uint8_t *id)
+{
+	struct nand_chip *chip = mtd->priv;
+	struct hynix_nand *hynix;
+	int ret;
+
+	hynix = kzalloc(sizeof(*hynix), GFP_KERNEL);
+	if (!hynix)
+		return -ENOMEM;
+
+	chip->manuf_priv = hynix;
+	chip->manuf_cleanup = h27_cleanup;
+
+	ret = h27ucg8t2a_rr_init(mtd);
+	if (ret)
+		kfree(hynix);
 
 	return ret;
 }
@@ -172,7 +192,11 @@ static int h27q_get_best_val(const u8 *buf, int size, int min_cnt)
 	return best;
 }
 
-#define H27Q_RR_TABLE_SIZE		784
+struct hq27_rr_table {
+	int page;
+	int size;
+};
+
 #define H27Q_RR_TABLE_NSETS		8
 
 static void h27q_set_slc_mode(struct mtd_info *mtd, bool enable)
@@ -183,16 +207,16 @@ static void h27q_set_slc_mode(struct mtd_info *mtd, bool enable)
 	chip->cmdfunc(mtd, cmd, -1, -1);
 }
 
-static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
+static int h27q_rr_init(struct mtd_info *mtd, const struct hq27_rr_table *info)
 {
 	struct nand_chip *chip = mtd->priv;
-	struct hynix_nand *hynix = NULL;
+	struct hynix_nand *hynix = chip->manuf_priv;
 	u8 * buf = NULL, tmp_buf[H27Q_RR_TABLE_NSETS];
-	u8 total_rr_count, rr_reg_count;
-	int i, j, k;
-	int ret;
+	int total_rr_count, rr_reg_count;
+	struct hynix_read_retry *rr = NULL;
+	int ret ,i, j, k;
 
-	buf = kzalloc(H27Q_RR_TABLE_SIZE, GFP_KERNEL);
+	buf = kzalloc(info->size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -204,9 +228,9 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 	chip->cmdfunc(mtd, 0x17, -1, -1);
 	chip->cmdfunc(mtd, 0x04, -1, -1);
 	chip->cmdfunc(mtd, 0x19, -1, -1);
-	chip->cmdfunc(mtd, NAND_CMD_READ0, 0x0, 0x21f);
+	chip->cmdfunc(mtd, NAND_CMD_READ0, 0x0, info->page);
 
-	chip->read_buf(mtd, buf, H27Q_RR_TABLE_SIZE);
+	chip->read_buf(mtd, buf, info->size);
 
 	chip->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
 	chip->cmdfunc(mtd, 0x36, 0x38, -1);
@@ -215,29 +239,26 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 	chip->cmdfunc(mtd, NAND_CMD_READ0, 0x0, -1);
 	chip->select_chip(mtd, -1);
 
-	/* TODO: support multi-die chips */
-
 	ret = h27q_get_best_val(buf, 8, 5);
 	if (ret < 0)
-		goto err;
+		goto out;
 	total_rr_count = ret;
 
 	ret = h27q_get_best_val(buf + 8, 8, 5);
 	if (ret < 0)
-		goto err;
+		goto out;
 	rr_reg_count = ret;
 
 	if (rr_reg_count != sizeof(h27q_read_retry_regs)) {
 		ret = -EINVAL;
-		goto err;
+		goto out;
 	}
 
-	hynix = kzalloc(sizeof(*hynix) +
-			(total_rr_count * rr_reg_count),
-			GFP_KERNEL);
-	if (!hynix) {
+	rr = kzalloc(sizeof(*rr) + (total_rr_count * rr_reg_count),
+		     GFP_KERNEL);
+	if (!rr) {
 		ret = -ENOMEM;
-		goto err;
+		goto out;
 	}
 
 	for (i = 0; i < total_rr_count; i++) {
@@ -254,7 +275,7 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 			ret = h27q_get_best_val(tmp_buf, H27Q_RR_TABLE_NSETS,
 						5);
 			if (ret >= 0) {
-				hynix->read_retry.values[(i * rr_reg_count) + j] = ret;
+				rr->values[(i * rr_reg_count) + j] = ret;
 				continue;
 			}
 
@@ -268,26 +289,53 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
 			ret = h27q_get_best_val(tmp_buf, H27Q_RR_TABLE_NSETS,
 						5);
 			if (ret < 0)
-				goto err;
-			hynix->read_retry.values[(i * rr_reg_count) + j] = ~ret;
+				goto out;
+			rr->values[(i * rr_reg_count) + j] = ~ret;
 		}
 	}
 
-	kfree(buf);
-
-	hynix->read_retry.nregs = rr_reg_count;
-	hynix->read_retry.regs = h27q_read_retry_regs;
-	chip->manuf_priv = hynix;
+	rr->nregs = rr_reg_count;
+	rr->regs = h27q_read_retry_regs;
+	hynix->read_retry = rr;
 	chip->setup_read_retry = nand_setup_read_retry_hynix;
 	chip->read_retries = total_rr_count;
+	ret = 0;
+
+out:
+	kfree(buf);
+	if (ret < 0)
+		kfree(rr);
+
+	return ret;
+}
+
+static const struct hq27_rr_table hq27_rr_tables[] = {
+	{ .page = 0x21f, .size = 784 },
+	{ .page = 0x200, .size = 528 },
+};
+
+static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
+{
+	struct nand_chip *chip = mtd->priv;
+	struct hynix_nand *hynix;
+	int i, ret;
+
+	hynix = kzalloc(sizeof(*hynix), GFP_KERNEL);
+	if (!hynix)
+		return -ENOMEM;
+
+	chip->manuf_priv = hynix;
 	chip->manuf_cleanup = h27_cleanup;
 	chip->set_slc_mode = h27q_set_slc_mode;
 
-	return 0;
+	for (i = 0; i < ARRAY_SIZE(hq27_rr_tables); i++) {
+		ret = h27q_rr_init(mtd, &hq27_rr_tables[i]);
+		if (!ret)
+			break;
+	}
 
-err:
-	kfree(buf);
-	kfree(hynix);
+	if (ret)
+		kfree(hynix);
 
 	return ret;
 }
