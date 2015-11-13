@@ -283,6 +283,11 @@ int ubi_wptr_next_wunit(struct ubi_wptr *ptr);
 int ubi_wptr_next_contiguous_wunit(struct ubi_wptr *ptr);
 int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit);
 
+static inline int ubi_wptr_cur_wunit(struct ubi_wptr *ptr)
+{
+	return ptr->cur_wunit;
+}
+
 /*
  * This function is the same as the 'ubi_leb_read()' function, but it does not
  * provide the checking capability.
