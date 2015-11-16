@@ -1030,4 +1030,7 @@ int nand_check_erased_ecc_chunk(void *data, int datalen,
 				void *ecc, int ecclen,
 				void *extraoob, int extraooblen,
 				int threshold);
+
+extern const struct nand_pairing_scheme dist3_pairing_scheme;
+extern const struct nand_pairing_scheme dist6_pairing_scheme;
 #endif /* __LINUX_MTD_NAND_H */
