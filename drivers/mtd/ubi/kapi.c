@@ -862,3 +862,326 @@ int ubi_unregister_volume_notifier(struct notifier_block *nb)
 	return blocking_notifier_chain_unregister(&ubi_notifiers, nb);
 }
 EXPORT_SYMBOL_GPL(ubi_unregister_volume_notifier);
+
+/**
+ * ubi_wptr_create - create a write pointer instance.
+ * @desc: the volume this write pointer is attached to
+ *
+ * This function creates a write pointer attached to the volume passed in
+ * arguments. This write pointer is initialized to point to a beginning of
+ * the LEB, but if you want to make it point somewhere else you should use
+ * ubi_wptr_rst().
+ * Also note that a write pointer is not attached to a specific LEB, but if
+ * you are accessing several LEBs in parallel you should have one instance
+ * per LEB.
+ *
+ * This function returns a non-NULL/non-ERR pointer in case of success and a
+ * negative error code in case of failure.
+ */
+struct ubi_wptr *ubi_wptr_create(struct ubi_volume_desc *desc)
+{
+	struct ubi_volume *vol = desc->vol;
+	struct ubi_wptr *ptr;
+	int skipsize, nwunit;
+
+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	nwunit = mtd_wunit_per_eb(vol->ubi->mtd);
+	skipsize = DIV_ROUND_UP(nwunit, sizeof(*ptr->skip));
+	ptr->skip = kzalloc(skipsize, GFP_KERNEL);
+	if (!ptr->skip) {
+		kfree(ptr);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	ptr->desc = desc;
+
+	return ptr;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_create);
+
+/**
+ * ubi_wptr_destroy - destroy a write pointer instance.
+ * @ptr: the write pointer to destroy
+ *
+ * This function destroy a write pointer previously created with
+ * ubi_wptr_create().
+ */
+void ubi_wptr_destroy(struct ubi_wptr *ptr)
+{
+	if (ptr) {
+		kfree(ptr->skip);
+		kfree(ptr);
+	}
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_destroy);
+
+/**
+ * ubi_wptr_rst - reset a write pointer.
+ * @ptr: the write pointer to reset
+ * @wunit: the write unit this pointer should point to.
+ *
+ * This function resets a write pointer, which means it clears the skip
+ * table and make it point to a new write-unit.
+ * This function should only be used when switching from one LEB to another.
+ * Moreover, since it resets the skip table, the @wunit parameter should point
+ * to a contiguous and secure area (this is the responsibility of the caller to
+ * ensure those two aspects).
+ */
+int ubi_wptr_rst(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_volume *vol = ptr->desc->vol;
+	int skipsize, nwunit;
+
+	nwunit = vol->usable_leb_size / vol->ubi->min_io_size;
+	skipsize = DIV_ROUND_UP(nwunit, sizeof(*ptr->skip));
+
+	memset(ptr->skip, 0, skipsize);
+	ptr->first_wunit = ptr->cur_wunit = wunit;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_rst);
+
+/**
+ * ubi_wptr_start - start a new write transaction.
+ * @ptr: the write pointer to interact with
+ *
+ * This function starts a new write transaction, or in other words it places
+ * the first_unit pointer to the current one, so that when the user wants to
+ * secure the data (ie. finish the transaction), the write pointer can know
+ * which write units should be skipped.
+ */
+void ubi_wptr_start(struct ubi_wptr *ptr)
+{
+	ptr->first_wunit = ptr->cur_wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_start);
+
+/**
+ * ubi_wptr_next_wunit - get the next write-unit.
+ * @ptr: the write pointer to interact with
+ *
+ * This function returns the next write-unit that can be written to.
+ * It skips all write units reserved to secure previous write transaction.
+ * In this case the returned value will be different from ->cur_wunit + 1.
+ */
+int ubi_wptr_next_wunit(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+	int wunit;
+
+	for (wunit = ptr->cur_wunit + 1; wunit < max_wunit; wunit++) {
+		if (!test_bit(wunit, ptr->skip))
+			break;
+	}
+
+	return wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_next_wunit);
+
+/**
+ * ubi_wptr_next_contiguous_wunit - get the next write-unit providing a
+ *				    contiguous memory region.
+ * @ptr: the write pointer to interact with
+ *
+ * This function does the same as ubi_wptr_next_wunit() except it returns
+ * the next write-unit providing a contiguous memory region up to the end
+ * of the LEB. Which means for example that if the next write-unit is not
+ * reserved to secure the previous write transaction, but the following is,
+ * this function will return ->cur_wunit + 3.
+ */
+int ubi_wptr_next_contiguous_wunit(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+	int wunit;
+
+	wunit = find_last_bit(ptr->skip, max_wunit);
+	if (wunit < max_wunit)
+		wunit++;
+
+	return wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_next_contiguous_wunit);
+
+/**
+ * ubi_wptr_move - move the write pointer elsewhere.
+ * @ptr: the write pointer to interact with
+ * @wunit: the new write unit to point to
+ *
+ * This function moves the write-pointer to a different write unit.
+ * It should only be used to move the pointer after the cur_wunit and is
+ * not meant to be used when moving from one LEB to another.
+ * This function is here to represent chunk writes inside a write transaction
+ * and if you move to a different write-unit, this means you've written on
+ * all of the write units between ->cur_wunit and @wunit.
+ */
+void ubi_wptr_move(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit >= ptr->cur_wunit);
+	ubi_assert(wunit <= max_wunit);
+	ubi_assert(!test_bit(wunit, ptr->skip));
+
+	ptr->cur_wunit = wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_move);
+
+/**
+ * ubi_wptr_should_be_filled - return whether a write-unit should be filled
+ *			       with data or not.
+ * @ptr: the write pointer to interact with
+ * @wunit: the write unit to test
+ *
+ * This function tests whether a write unit should be filled or not.
+ * Note that all write units except the ones skipped to secure data should be
+ * filled, otherwise MLC/TLC NAND storage may not be able to program the
+ * following write units.
+ * This function should be used when you want to write to the next contiguous
+ * area and have to manually skip and fill some pages in order to keep those
+ * NAND devices happy.
+ *
+ * Returns true if wunit should be filled, return false otherwise.
+ */
+int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit)
+{
+	return !test_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_should_be_filled);
+
+/**
+ * ubi_wptr_skipped - return whether a write-unit has been skipped or not.
+ * @ptr: the write pointer to interact with
+ * @wunit: the write unit to test
+ *
+ * This function tests whether a write unit has been skipped or not.
+ *
+ * Returns true if wunit has been skipped, return false otherwise.
+ */
+int ubi_wptr_skipped(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit > ptr->cur_wunit);
+	ubi_assert(wunit < max_wunit);
+
+	return test_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skipped);
+
+/**
+ * ubi_wptr_skip - manually mark a write-unit as skipped.
+ * @ptr: the write pointer to interact with
+ * @wunit: the write unit to test
+ *
+ * This function should be used in conjonction with ubi_wptr_should_be_filled()
+ * to fill and skip some write units in order to end up pointing to contiguous
+ * memory region.
+ */
+void ubi_wptr_skip(struct ubi_wptr *ptr, int wunit)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	int max_wunit = ubi->leb_size / ubi->min_io_size;
+
+	ubi_assert(wunit > ptr->cur_wunit);
+	ubi_assert(wunit < max_wunit);
+
+	set_bit(wunit, ptr->skip);
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skip);
+
+/**
+ * ubi_wptr_secure - secure all data written during the current write
+ *		     transaction.
+ * @ptr: the write pointer to interact with
+ *
+ * This function skips as much pages as necessary to secure/commit the current
+ * write transaction.
+ * This function does not move the write pointer, this is the responsibility of
+ * the caller to call ubi_wptr_move() and ubi_wptr_start() to start a new write
+ * transaction. This operation is left to the use because we don't know whether
+ * the write pointer should point to a contiguous memory region or not.
+ */
+void ubi_wptr_secure(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+	struct mtd_info *mtd = ubi->mtd;
+	int min_io_size = ubi->min_io_size;
+	int leb_start_wunit = ubi->leb_start / min_io_size;
+	int i;
+
+	for (i = ptr->first_wunit; i <= ptr->cur_wunit; i++) {
+		struct nand_pairing_info info;
+
+		/* The write unit has been skipped, test the next one. */
+		if (test_bit(i, ptr->skip))
+			continue;
+
+		mtd_wunit_to_pairing_info(mtd, i + leb_start_wunit, &info);
+
+		for (info.group++; info.group < mtd_pairing_groups_per_eb(mtd);
+		     info.group++) {
+			int wunit = mtd_pairing_info_to_wunit(mtd, &info);
+
+			wunit -= leb_start_wunit;
+			set_bit(wunit, ptr->skip);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_secure);
+
+/**
+ * ubi_wptr_skip_len - get the length to skip after the current write unit.
+ * @ptr: the write pointer to interact with
+ *
+ * Returns the length to skip (in bytes) to reach the next writable
+ * (ie. non-skipped) write unit.
+ */
+int ubi_wptr_skip_len(struct ubi_wptr *ptr)
+{
+	struct ubi_device *ubi = ptr->desc->vol->ubi;
+
+	return (ubi_wptr_next_wunit(ptr) - ptr->cur_wunit - 1) *
+	       ubi->min_io_size;
+}
+EXPORT_SYMBOL_GPL(ubi_wptr_skip_len);
+
+/**
+ * ubi_next_wunit_paired_with - get the next write unit paired with the
+				provided one.
+ * @desc: the volume desc pointer
+ * @wunit: the wunit we are refetring to
+ *
+ * Returns the next write unit paired with the one passed in arguments.
+ * If @wunit is the last one in the pair, @wunit is returned.
+ */
+int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit)
+{
+	struct ubi_device *ubi = desc->vol->ubi;
+	struct mtd_info *mtd = ubi->mtd;
+	int min_io_size = ubi->min_io_size;
+	int max_wunit = ubi->leb_size / min_io_size;
+	int leb_start_wunit = ubi->leb_start / min_io_size;
+	struct nand_pairing_info info;
+
+	ubi_assert(wunit < max_wunit);
+
+	if (mtd_pairing_groups_per_eb(mtd) == 1)
+		return wunit;
+
+	mtd_wunit_to_pairing_info(mtd, wunit + leb_start_wunit, &info);
+	if (info.group == mtd_pairing_groups_per_eb(mtd) - 1)
+		return wunit;
+
+	info.group = mtd_pairing_groups_per_eb(mtd);
+
+	return mtd_pairing_info_to_wunit(mtd, &info) - leb_start_wunit;
+}
+EXPORT_SYMBOL_GPL(ubi_next_wunit_paired_with);

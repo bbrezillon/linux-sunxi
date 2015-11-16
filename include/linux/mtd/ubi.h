@@ -231,6 +231,27 @@ struct ubi_notification {
 	struct ubi_volume_info vi;
 };
 
+/**
+ * struct ubi_wptr - UBI write pointer structure.
+ * @desc: UBI volume desc attached to this write pointer
+ * @first_wunit: the write-unit we have written to after the last call to
+ *		 ubi_wptr_secure()
+ * @cur_wunit: the write-unit the write pointer is currently pointing to
+ * @skip: the skip table used to keep track of the write-unit that should
+ *	  be skipped to secure previously written data
+ *
+ * This structure helps in keeping track of the position we are currently
+ * writing to. This is mainly useful when dealing with MLC/TLC NAND devices
+ * on which some write-unit (or pages) have to be skipped in order to
+ * guarantee integrity of previously written data.
+ */
+struct ubi_wptr {
+	struct ubi_volume_desc *desc;
+	int first_wunit;
+	int cur_wunit;
+	unsigned long *skip;
+};
+
 /* UBI descriptor given to users when they open UBI volumes */
 struct ubi_volume_desc;
 
@@ -261,6 +282,25 @@ int ubi_leb_map(struct ubi_volume_desc *desc, int lnum);
 int ubi_is_mapped(struct ubi_volume_desc *desc, int lnum);
 int ubi_sync(int ubi_num);
 int ubi_flush(int ubi_num, int vol_id, int lnum);
+
+struct ubi_wptr *ubi_wptr_create(struct ubi_volume_desc *desc);
+void ubi_wptr_destroy(struct ubi_wptr *ptr);
+int ubi_wptr_rst(struct ubi_wptr *ptr, int wunit);
+void ubi_wptr_start(struct ubi_wptr *ptr);
+void ubi_wptr_move(struct ubi_wptr *ptr, int wunit);
+void ubi_wptr_secure(struct ubi_wptr *ptr);
+int ubi_wptr_should_be_filled(struct ubi_wptr *ptr, int wunit);
+int ubi_wptr_skipped(struct ubi_wptr *ptr, int wunit);
+void ubi_wptr_skip(struct ubi_wptr *ptr, int wunit);
+int ubi_wptr_skip_len(struct ubi_wptr *ptr);
+int ubi_wptr_next_wunit(struct ubi_wptr *ptr);
+int ubi_wptr_next_contiguous_wunit(struct ubi_wptr *ptr);
+int ubi_next_wunit_paired_with(struct ubi_volume_desc *desc, int wunit);
+
+static inline int ubi_wptr_cur_wunit(struct ubi_wptr *ptr)
+{
+	return ptr->cur_wunit;
+}
 
 /*
  * This function is the same as the 'ubi_leb_read()' function, but it does not
