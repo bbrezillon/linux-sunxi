@@ -1189,4 +1189,6 @@ int nand_reset(struct nand_chip *chip, int chipnr);
 /* Free resources held by the NAND device */
 void nand_cleanup(struct nand_chip *chip);
 
+extern const struct mtd_pairing_scheme dist3_pairing_scheme;
+extern const struct mtd_pairing_scheme dist6_pairing_scheme;
 #endif /* __LINUX_MTD_NAND_H */
