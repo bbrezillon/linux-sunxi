@@ -826,6 +826,7 @@ struct nand_flash_dev {
 		uint16_t step_ds;
 	} ecc;
 	int onfi_timing_mode_default;
+	const struct nand_pairing_scheme *pairing;
 };
 
 /**
