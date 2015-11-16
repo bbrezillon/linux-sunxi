@@ -90,6 +90,25 @@ static int first_non_ff(void *buf, int len)
 }
 
 /**
+ * last_non_ff - find offset of the last non-0xff byte.
+ * @buf: buffer to search in
+ * @len: length of buffer
+ *
+ * This function returns offset of the last non-0xff byte in @buf or %-1 if
+ * the buffer contains only 0xff bytes.
+ */
+static int last_non_ff(void *buf, int len)
+{
+	uint8_t *p = buf;
+	int i;
+
+	for (i = len - 1; i >= 0; i--)
+		if (*p-- != 0xff)
+			return i;
+	return -1;
+}
+
+/**
  * get_master_node - get the last valid master node allowing for corruption.
  * @c: UBIFS file-system description object
  * @lnum: LEB number
@@ -471,12 +490,39 @@ static int no_more_nodes(const struct ubifs_info *c, void *buf, int len,
 			int lnum, int offs)
 {
 	struct ubifs_ch *ch = buf;
-	int skip, dlen = le32_to_cpu(ch->len);
+	int dlen = le32_to_cpu(ch->len);
+	int wunit = offs / c->max_write_size;
+	int paired_wunit, nonff_wunit;
+	int tmp_offs, nonff_offs;
 
-	/* Check for empty space after the corrupt node's common header */
-	skip = ALIGN(offs + UBIFS_CH_SZ, c->max_write_size) - offs;
-	if (is_empty(buf + skip, len - skip))
+	nonff_offs = last_non_ff(buf + offs, len);
+	ubifs_assert(nonff_offs > 0);
+	nonff_offs += offs;
+	nonff_wunit = nonff_offs / c->max_write_size;
+
+	tmp_offs = ALIGN(offs + UBIFS_CH_SZ, c->max_write_size);
+	if (tmp_offs >= nonff_offs)
 		return 1;
+
+	for (wunit = offs / c->max_write_size;
+	     wunit <= (offs + UBIFS_CH_SZ) / c->max_write_size; wunit++) {
+		int test_wunit = wunit;
+
+		while (1) {
+			if (test_wunit == nonff_wunit)
+				return 1;
+			else if (test_wunit > nonff_wunit)
+				break;
+
+			paired_wunit = ubi_next_wunit_paired_with(c->ubi,
+								  test_wunit);
+			if (paired_wunit == test_wunit)
+				break;
+
+			test_wunit = paired_wunit;
+		}
+	}
+
 	/*
 	 * The area after the common header size is not empty, so the common
 	 * header must be intact. Check it.
@@ -485,12 +531,33 @@ static int no_more_nodes(const struct ubifs_info *c, void *buf, int len,
 		dbg_rcvry("unexpected bad common header at %d:%d", lnum, offs);
 		return 0;
 	}
+
 	/* Now we know the corrupt node's length we can skip over it */
-	skip = ALIGN(offs + dlen, c->max_write_size) - offs;
-	/* After which there should be empty space */
-	if (is_empty(buf + skip, len - skip))
+	tmp_offs = ALIGN(offs + dlen, c->max_write_size);
+	if (tmp_offs >= nonff_offs)
 		return 1;
-	dbg_rcvry("unexpected data at %d:%d", lnum, offs + skip);
+
+	for (wunit = offs / c->max_write_size;
+	     wunit <= (offs + dlen) / c->max_write_size; wunit++) {
+		int test_wunit = wunit;
+
+		while (1) {
+			if (test_wunit == nonff_wunit)
+				return 1;
+			else if (test_wunit > nonff_wunit)
+				break;
+
+			paired_wunit = ubi_next_wunit_paired_with(c->ubi,
+								  test_wunit);
+			if (paired_wunit == test_wunit)
+				break;
+
+			test_wunit = paired_wunit;
+		}
+	}
+
+	dbg_rcvry("unexpected data at %d:%d", lnum, tmp_offs);
+
 	return 0;
 }
 
@@ -635,15 +702,25 @@ struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
 					 int offs, void *sbuf, int jhead)
 {
 	int ret = 0, err, len = c->leb_size - offs, start = offs, min_io_unit;
-	int grouped = jhead == -1 ? 0 : c->jheads[jhead].grouped;
+	struct ubifs_jhead *j = jhead == -1 ? NULL : &c->jheads[jhead];
 	struct ubifs_scan_leb *sleb;
+	struct ubi_wptr *wptr = NULL;
 	void *buf = sbuf + offs;
+	int grouped = 0;
 
 	dbg_rcvry("%d:%d, jhead %d, grouped %d", lnum, offs, jhead, grouped);
+
+	if (j) {
+		grouped = j->grouped;
+		wptr = j->wbuf.wptr;
+	}
 
 	sleb = ubifs_start_scan(c, lnum, offs, sbuf);
 	if (IS_ERR(sleb))
 		return sleb;
+
+	if (wptr)
+		ubi_wptr_rst(wptr, offs / c->min_io_size);
 
 	ubifs_assert(len >= 8);
 	while (len >= 8) {
@@ -669,8 +746,22 @@ struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
 			offs += node_len;
 			buf += node_len;
 			len -= node_len;
+			if (wptr)
+				ubi_wptr_move(wptr, offs / c->min_io_size);
 		} else if (ret > 0) {
 			/* Padding bytes or a valid padding node */
+			while (wptr && ret > c->min_io_size) {
+				/*
+				 * More than one wunit has been skipped,
+				 * consider this empty space as skipped
+				 * wunits.
+				 */
+				offs += c->min_io_size;
+				buf += c->min_io_size;
+				len -= c->min_io_size;
+				ret -= c->min_io_size;
+				ubi_wptr_skip(wptr, offs / c->min_io_size);
+			}
 			offs += ret;
 			buf += ret;
 			len -= ret;
@@ -1204,7 +1295,7 @@ int ubifs_rcvry_gc_commit(struct ubifs_info *c)
 	mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
 	err = ubifs_garbage_collect_leb(c, &lp);
 	if (err >= 0) {
-		int err2 = ubifs_wbuf_sync_nolock(wbuf);
+		int err2 = ubifs_wbuf_sync_nolock(wbuf, false);
 
 		if (err2)
 			err = err2;

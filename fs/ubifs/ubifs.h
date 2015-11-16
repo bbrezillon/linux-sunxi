@@ -703,6 +703,7 @@ struct ubifs_wbuf {
 	struct hrtimer timer;
 	unsigned int no_timer:1;
 	unsigned int need_sync:1;
+	struct ubi_wptr *wptr;
 	int next_ino;
 	ino_t *inodes;
 };
@@ -1492,6 +1493,7 @@ int ubifs_is_mapped(const struct ubifs_info *c, int lnum);
 int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len);
 int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs);
 int ubifs_wbuf_init(struct ubifs_info *c, struct ubifs_wbuf *wbuf);
+int ubifs_wbuf_fit_in_leb(struct ubifs_wbuf *wbuf, int len);
 int ubifs_read_node(const struct ubifs_info *c, void *buf, int type, int len,
 		    int lnum, int offs);
 int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
@@ -1504,7 +1506,7 @@ void ubifs_prepare_node(struct ubifs_info *c, void *buf, int len, int pad);
 void ubifs_prep_grp_node(struct ubifs_info *c, void *node, int len, int last);
 int ubifs_io_init(struct ubifs_info *c);
 void ubifs_pad(const struct ubifs_info *c, void *buf, int pad);
-int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf);
+int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf, bool contiguous);
 int ubifs_bg_wbufs_sync(struct ubifs_info *c);
 void ubifs_wbuf_add_ino_nolock(struct ubifs_wbuf *wbuf, ino_t inum);
 int ubifs_sync_wbufs_by_inode(struct ubifs_info *c, struct inode *inode);

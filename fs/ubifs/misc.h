@@ -139,7 +139,7 @@ static inline int ubifs_wbuf_sync(struct ubifs_wbuf *wbuf)
 	int err;
 
 	mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
-	err = ubifs_wbuf_sync_nolock(wbuf);
+	err = ubifs_wbuf_sync_nolock(wbuf, false);
 	mutex_unlock(&wbuf->io_mutex);
 	return err;
 }

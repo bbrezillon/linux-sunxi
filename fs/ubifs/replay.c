@@ -677,6 +677,11 @@ static int replay_bud(struct ubifs_info *c, struct bud_entry *b)
 
 	b->dirty = sleb->endpt - offs - used;
 	b->free = c->leb_size - sleb->endpt;
+	if (!c->need_recovery && is_last) {
+		struct ubifs_jhead *jhead = &c->jheads[b->bud->jhead];
+
+		ubi_wptr_rst(jhead->wbuf.wptr, sleb->endpt / c->min_io_size);
+	}
 	dbg_mnt("bud LEB %d replied: dirty %d, free %d",
 		lnum, b->dirty, b->free);
 

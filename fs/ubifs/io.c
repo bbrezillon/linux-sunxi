@@ -300,6 +300,56 @@ out:
 }
 
 /**
+ * ubifs_pad_and_skip - pad and skip flash space.
+ * @c: UBIFS file-system description object
+ * @buf: buffer to put padding to
+ * @pad: how many bytes to pad
+ * @skip: number of bytes to skip. Should be aligned on %c->min_io_size
+ *
+ * The flash media obliges us to write only in chunks of %c->min_io_size and
+ * when we have to write less data we add padding node to the write-buffer and
+ * pad it to the next minimal I/O unit's boundary. Padding nodes help when the
+ * media is being scanned. If the amount of wasted space is not enough to fit a
+ * padding node which takes %UBIFS_PAD_NODE_SZ bytes, we write padding bytes
+ * pattern (%UBIFS_PADDING_BYTE).
+ *
+ * Padding nodes are also used to fill gaps when the "commit-in-gaps" method is
+ * used.
+ *
+ * Skipping write units is necessary for MLC devices where write units are
+ * paired together and interrupting a program operation might corrupt other
+ * write units. The skip value should be aligned on %c->min_io_size.
+ */
+static void ubifs_pad_and_skip(const struct ubifs_info *c, void *buf, int pad,
+			       int skip)
+{
+	uint32_t crc;
+
+	ubifs_assert(pad >= 0 && !(pad & 7));
+	ubifs_assert(!skip || pad >= UBIFS_PAD_NODE_SZ);
+	ubifs_assert(!(skip % c->min_io_size));
+
+	if (pad >= UBIFS_PAD_NODE_SZ) {
+		struct ubifs_ch *ch = buf;
+		struct ubifs_pad_node *pad_node = buf;
+
+		ch->magic = cpu_to_le32(UBIFS_NODE_MAGIC);
+		ch->node_type = UBIFS_PAD_NODE;
+		ch->group_type = UBIFS_NO_NODE_GROUP;
+		ch->padding[0] = ch->padding[1] = 0;
+		ch->sqnum = 0;
+		ch->len = cpu_to_le32(UBIFS_PAD_NODE_SZ);
+		pad -= UBIFS_PAD_NODE_SZ;
+		pad_node->pad_len = cpu_to_le32(pad + skip);
+		crc = crc32(UBIFS_CRC32_INIT, buf + 8, UBIFS_PAD_NODE_SZ - 8);
+		ch->crc = cpu_to_le32(crc);
+		memset(buf + UBIFS_PAD_NODE_SZ, 0, pad);
+	} else if (pad > 0)
+		/* Too little space, padding node won't fit */
+		memset(buf, UBIFS_PADDING_BYTE, pad);
+}
+
+/**
  * ubifs_pad - pad flash space.
  * @c: UBIFS file-system description object
  * @buf: buffer to put padding to
@@ -317,28 +367,7 @@ out:
  */
 void ubifs_pad(const struct ubifs_info *c, void *buf, int pad)
 {
-	uint32_t crc;
-
-	ubifs_assert(pad >= 0 && !(pad & 7));
-
-	if (pad >= UBIFS_PAD_NODE_SZ) {
-		struct ubifs_ch *ch = buf;
-		struct ubifs_pad_node *pad_node = buf;
-
-		ch->magic = cpu_to_le32(UBIFS_NODE_MAGIC);
-		ch->node_type = UBIFS_PAD_NODE;
-		ch->group_type = UBIFS_NO_NODE_GROUP;
-		ch->padding[0] = ch->padding[1] = 0;
-		ch->sqnum = 0;
-		ch->len = cpu_to_le32(UBIFS_PAD_NODE_SZ);
-		pad -= UBIFS_PAD_NODE_SZ;
-		pad_node->pad_len = cpu_to_le32(pad);
-		crc = crc32(UBIFS_CRC32_INIT, buf + 8, UBIFS_PAD_NODE_SZ - 8);
-		ch->crc = cpu_to_le32(crc);
-		memset(buf + UBIFS_PAD_NODE_SZ, 0, pad);
-	} else if (pad > 0)
-		/* Too little space, padding node won't fit */
-		memset(buf, UBIFS_PADDING_BYTE, pad);
+	ubifs_pad_and_skip(c, buf, pad, 0);
 }
 
 /**
@@ -477,6 +506,87 @@ static void cancel_wbuf_timer_nolock(struct ubifs_wbuf *wbuf)
 	hrtimer_cancel(&wbuf->timer);
 }
 
+static int ubifs_wbuf_search_contiguous(struct ubifs_wbuf *wbuf, int len)
+{
+	struct ubifs_info *c = wbuf->c;
+	struct ubi_wptr *wptr = wbuf->wptr;
+	int wunit, offs, contiguous_offs = wbuf->offs + wbuf->used;
+	int avail = 0;
+
+	/*
+	 * minus len means we're searching for the next contiguous region
+	 * which ends at the end of the LEB.
+	 */
+	if (len < 0)
+		return ubi_wptr_next_contiguous_wunit(wptr) * c->min_io_size;
+
+	avail = wbuf->avail;
+	wunit = ubi_wptr_cur_wunit(wptr) + 1;
+	offs = wunit * c->min_io_size;
+
+	while (offs < c->leb_size && avail < len) {
+		if (ubi_wptr_skipped(wptr, wunit)) {
+			avail = 0;
+		} else {
+			if (!avail)
+				contiguous_offs = offs;
+			avail += c->min_io_size;
+
+			if (offs < c->leb_size - c->min_io_size &&
+			    ubi_wptr_skipped(wptr, wunit))
+				avail -= ALIGN(UBIFS_PAD_NODE_SZ, 8);
+		}
+
+		offs += c->min_io_size;
+	}
+
+	if (avail < len)
+		return -ENOSPC;
+
+	return contiguous_offs;
+}
+
+static int ubifs_wbuf_fill_skipped_wunits(struct ubifs_wbuf *wbuf)
+{
+	struct ubi_wptr *wptr = wbuf->wptr;
+	struct ubifs_info *c = wbuf->c;
+	int i, init_done = 0, err = 0;
+
+	for (i = ubi_wptr_next_wunit(wptr);
+	     i < ubi_wptr_next_contiguous_wunit(wptr); i++) {
+		if (!ubi_wptr_should_be_filled(wptr, i))
+			continue;
+
+		/*
+		 * update wbuf properties to make it point to the wunit we are
+		 * filling.
+		 */
+		spin_lock(&wbuf->lock);
+		wbuf->offs = i * c->min_io_size;
+		if (!init_done) {
+			wbuf->used = 0;
+			wbuf->size = c->min_io_size;
+			memset(wbuf->buf, 0, wbuf->size);
+			init_done = 1;
+		}
+		spin_unlock(&wbuf->lock);
+
+		err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf,
+				      wbuf->offs, wbuf->size);
+		if (err)
+			return err;
+
+		ubi_wptr_skip(wptr, i);
+	}
+
+	return 0;
+}
+
+int ubifs_wbuf_fit_in_leb(struct ubifs_wbuf *wbuf, int len)
+{
+	return ubifs_wbuf_search_contiguous(wbuf, len) >= 0;
+}
+
 /**
  * ubifs_wbuf_sync_nolock - synchronize write-buffer.
  * @wbuf: write-buffer to synchronize
@@ -490,17 +600,18 @@ static void cancel_wbuf_timer_nolock(struct ubifs_wbuf *wbuf)
  * of the write-buffer (aligned on @c->min_io_size boundary) is synchronized.
  * This way we waste less space.
  */
-int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
+int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf, bool contiguous)
 {
 	struct ubifs_info *c = wbuf->c;
-	int err, dirt, sync_len;
+	struct ubi_wptr *wptr = wbuf->wptr;
+	int err, dirt, sync_len, offs, next_wunit;
 
 	cancel_wbuf_timer_nolock(wbuf);
-	if (!wbuf->used || wbuf->lnum == -1)
-		/* Write-buffer is empty or not seeked */
+	if (wbuf->lnum == -1)
+		/* Write-buffer is not seeked */
 		return 0;
 
-	dbg_io("LEB %d:%d, %d bytes, jhead %s",
+	dbg_io("%s:%i: LEB %d:%d, %d bytes, jhead %s", __func__, __LINE__,
 	       wbuf->lnum, wbuf->offs, wbuf->used, dbg_jhead(wbuf->jhead));
 	ubifs_assert(!(wbuf->avail & 7));
 	ubifs_assert(wbuf->offs + wbuf->size <= c->leb_size);
@@ -514,20 +625,48 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 	if (c->ro_error)
 		return -EROFS;
 
+	ubi_wptr_secure(wptr);
+
 	/*
 	 * Do not write whole write buffer but write only the minimum necessary
 	 * amount of min. I/O units.
 	 */
 	sync_len = ALIGN(wbuf->used, c->min_io_size);
-	dirt = sync_len - wbuf->used;
+	if (contiguous)
+		next_wunit = ubi_wptr_next_contiguous_wunit(wptr);
+	else
+		next_wunit = ubi_wptr_next_wunit(wptr);
+
+	/* Write-buffer is empty and we don't have to secure previous wunits */
+	if (!sync_len && next_wunit == ubi_wptr_cur_wunit(wptr) + 1)
+		return 0;
+
+	if (!sync_len)
+		sync_len = c->min_io_size;
+
+	offs = next_wunit * c->min_io_size;
+	dirt = offs - wbuf->offs - wbuf->used;
 	if (dirt)
-		ubifs_pad(c, wbuf->buf + wbuf->used, dirt);
+		ubifs_pad_and_skip(c, wbuf->buf + wbuf->used,
+				   sync_len - wbuf->used,
+				   offs - wbuf->offs - sync_len);
+
 	err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf, wbuf->offs, sync_len);
 	if (err)
 		return err;
 
+
+	if (contiguous) {
+		err = ubifs_wbuf_fill_skipped_wunits(wbuf);
+		if (err)
+			return err;
+	}
+
+	ubi_wptr_move(wptr, next_wunit);
+	ubi_wptr_start(wptr);
+
 	spin_lock(&wbuf->lock);
-	wbuf->offs += sync_len;
+	wbuf->offs = offs;
 	/*
 	 * Now @wbuf->offs is not necessarily aligned to @c->max_write_size.
 	 * But our goal is to optimize writes and make sure we write in
@@ -547,6 +686,14 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 	wbuf->avail = wbuf->size;
 	wbuf->used = 0;
 	wbuf->next_ino = 0;
+
+	/*
+	 * Reserve space for a padding node if the next write unit has to be
+	 * skipped.
+	 */
+	if (ubi_wptr_skip_len(wptr))
+		wbuf->avail -= ALIGN(UBIFS_PAD_NODE_SZ, 8);
+
 	spin_unlock(&wbuf->lock);
 
 	if (wbuf->sync_callback)
@@ -567,14 +714,17 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
  */
 int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs)
 {
-	const struct ubifs_info *c = wbuf->c;
+	struct ubifs_info *c = wbuf->c;
+	struct ubi_wptr *wptr = wbuf->wptr;
 
-	dbg_io("LEB %d:%d, jhead %s", lnum, offs, dbg_jhead(wbuf->jhead));
+	dbg_io("%s:%i LEB %d:%d, jhead %s", __func__, __LINE__, lnum, offs, dbg_jhead(wbuf->jhead));
 	ubifs_assert(lnum >= 0 && lnum < c->leb_cnt);
 	ubifs_assert(offs >= 0 && offs <= c->leb_size);
 	ubifs_assert(offs % c->min_io_size == 0 && !(offs & 7));
 	ubifs_assert(lnum != wbuf->lnum);
 	ubifs_assert(wbuf->used == 0);
+
+	ubi_wptr_rst(wptr, offs / c->min_io_size);
 
 	spin_lock(&wbuf->lock);
 	wbuf->lnum = lnum;
@@ -633,7 +783,7 @@ int ubifs_bg_wbufs_sync(struct ubifs_info *c)
 			continue;
 		}
 
-		err = ubifs_wbuf_sync_nolock(wbuf);
+		err = ubifs_wbuf_sync_nolock(wbuf, false);
 		mutex_unlock(&wbuf->io_mutex);
 		if (err) {
 			ubifs_err(c, "cannot sync write-buffer, error %d", err);
@@ -675,7 +825,9 @@ out_timers:
 int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 {
 	struct ubifs_info *c = wbuf->c;
-	int err, written, n, aligned_len = ALIGN(len, 8);
+	struct ubi_wptr *wptr = wbuf->wptr;
+	int err, written, n, skip_len, aligned_len = ALIGN(len, 8), dirt = 0;
+	int offs;
 
 	dbg_io("%d bytes (%s) to jhead %s wbuf at LEB %d:%d", len,
 	       dbg_ntype(((struct ubifs_ch *)buf)->node_type),
@@ -713,13 +865,24 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		if (aligned_len == wbuf->avail) {
 			dbg_io("flush jhead %s wbuf to LEB %d:%d",
 			       dbg_jhead(wbuf->jhead), wbuf->lnum, wbuf->offs);
+			skip_len = ubi_wptr_skip_len(wptr);
+			if (skip_len) {
+				dirt = skip_len + wbuf->size - wbuf->used - len;
+				ubifs_pad_and_skip(c,
+						   wbuf->buf + wbuf->used + len,
+						   wbuf->size - wbuf->used - len,
+						   skip_len);
+			}
 			err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf,
 					      wbuf->offs, wbuf->size);
 			if (err)
 				goto out;
 
+			offs = wbuf->offs + wbuf->size + skip_len;
+			ubi_wptr_move(wptr, offs / c->min_io_size);
+
 			spin_lock(&wbuf->lock);
-			wbuf->offs += wbuf->size;
+			wbuf->offs = offs;
 			if (c->leb_size - wbuf->offs >= c->max_write_size)
 				wbuf->size = c->max_write_size;
 			else
@@ -727,6 +890,13 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 			wbuf->avail = wbuf->size;
 			wbuf->used = 0;
 			wbuf->next_ino = 0;
+
+			/*
+			 * Reserve space for a padding node if the next write
+			 * unit has to be skipped.
+			 */
+			if (ubi_wptr_skip_len(wptr))
+				wbuf->avail -= ALIGN(UBIFS_PAD_NODE_SZ, 8);
 			spin_unlock(&wbuf->lock);
 		} else {
 			spin_lock(&wbuf->lock);
@@ -739,6 +909,56 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	}
 
 	written = 0;
+
+	offs = ubifs_wbuf_search_contiguous(wbuf, aligned_len);
+	if (offs < 0) {
+		err = offs;
+		goto out;
+	} else if (offs != wbuf->offs + wbuf->used) {
+		int next_wunit = offs / c->min_io_size;
+
+		skip_len = offs - wbuf->offs - wbuf->used;
+		ubifs_pad_and_skip(c, wbuf->buf + wbuf->used,
+				   wbuf->size - wbuf->used, skip_len);
+		err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf,
+				      wbuf->offs, wbuf->size);
+		if (err)
+			goto out;
+
+		/* Account for pad and skip length in the dirty space */
+		dirt += skip_len + wbuf->size - wbuf->used;
+
+		/*
+		 * If we moved to the next contiguous area we should fill
+		 * all skipped pages that need to be filled (ie. those not
+		 * marked as skipped in the skip table).
+		 */
+		if (ubi_wptr_next_contiguous_wunit(wptr) == next_wunit) {
+			err = ubifs_wbuf_fill_skipped_wunits(wbuf);
+			if (err)
+				goto out;
+		}
+
+		ubi_wptr_move(wptr, next_wunit);
+
+		/* Now we can set the new offset */
+		spin_lock(&wbuf->lock);
+		wbuf->offs = offs;
+		if (c->leb_size - wbuf->offs >= c->max_write_size)
+			wbuf->size = c->max_write_size;
+		else
+			wbuf->size = c->leb_size - wbuf->offs;
+		wbuf->avail = wbuf->size;
+		wbuf->used = 0;
+
+		/*
+		 * Reserve space for a padding node if the next write
+		 * unit has to be skipped.
+		 */
+		if (ubi_wptr_skip_len(wptr))
+			wbuf->avail -= ALIGN(UBIFS_PAD_NODE_SZ, 8);
+		spin_unlock(&wbuf->lock);
+	}
 
 	if (wbuf->used) {
 		/*
@@ -818,11 +1038,13 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	wbuf->next_ino = 0;
 	spin_unlock(&wbuf->lock);
 
+	ubi_wptr_move(wptr, wbuf->offs / c->min_io_size);
+
 exit:
 	if (wbuf->sync_callback) {
 		int free = c->leb_size - wbuf->offs - wbuf->used;
 
-		err = wbuf->sync_callback(c, wbuf->lnum, free, 0);
+		err = wbuf->sync_callback(c, wbuf->lnum, free, dirt);
 		if (err)
 			goto out;
 	}
@@ -901,7 +1123,7 @@ int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 	int err, rlen, overlap;
 	struct ubifs_ch *ch = buf;
 
-	dbg_io("LEB %d:%d, %s, length %d, jhead %s", lnum, offs,
+	dbg_io("%s:%i: LEB %d:%d, %s, length %d, jhead %s", __func__, __LINE__, lnum, offs,
 	       dbg_ntype(type), len, dbg_jhead(wbuf->jhead));
 	ubifs_assert(wbuf && lnum >= 0 && lnum < c->leb_cnt && offs >= 0);
 	ubifs_assert(!(offs & 7) && offs < c->leb_size);
@@ -1028,10 +1250,15 @@ out:
 int ubifs_wbuf_init(struct ubifs_info *c, struct ubifs_wbuf *wbuf)
 {
 	size_t size;
+	int err = -ENOMEM;
 
 	wbuf->buf = kmalloc(c->max_write_size, GFP_KERNEL);
 	if (!wbuf->buf)
 		return -ENOMEM;
+
+	wbuf->wptr = ubi_wptr_create(c->ubi);
+	if (!wbuf->wptr)
+		goto err;
 
 	size = (c->max_write_size / UBIFS_CH_SZ + 1) * sizeof(ino_t);
 	wbuf->inodes = kmalloc(size, GFP_KERNEL);
@@ -1064,6 +1291,16 @@ int ubifs_wbuf_init(struct ubifs_info *c, struct ubifs_wbuf *wbuf)
 	wbuf->delta *= 1000000000ULL;
 	ubifs_assert(wbuf->delta <= ULONG_MAX);
 	return 0;
+
+err:
+	kfree(wbuf->inodes);
+	wbuf->inodes = NULL;
+	ubi_wptr_destroy(wbuf->wptr);
+	wbuf->wptr = NULL;
+	kfree(wbuf->buf);
+	wbuf->buf = NULL;
+
+	return err;
 }
 
 /**
@@ -1138,7 +1375,7 @@ int ubifs_sync_wbufs_by_inode(struct ubifs_info *c, struct inode *inode)
 
 		mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
 		if (wbuf_has_ino(wbuf, inode->i_ino))
-			err = ubifs_wbuf_sync_nolock(wbuf);
+			err = ubifs_wbuf_sync_nolock(wbuf, false);
 		mutex_unlock(&wbuf->io_mutex);
 
 		if (err) {
