@@ -1056,4 +1056,7 @@ int nand_read_oob_std(struct mtd_info *mtd, struct nand_chip *chip, int page);
 /* Default read_oob syndrome implementation */
 int nand_read_oob_syndrome(struct mtd_info *mtd, struct nand_chip *chip,
 			   int page);
+
+extern const struct nand_pairing_scheme dist3_pairing_scheme;
+extern const struct nand_pairing_scheme dist6_pairing_scheme;
 #endif /* __LINUX_MTD_NAND_H */
