@@ -127,6 +127,36 @@ struct mtd_ooblayout_ops {
 		    struct mtd_oob_region *oobfree);
 };
 
+/**
+ * struct mtd_pairing_info - Page pairing information
+ *
+ * @pair: represent the pair index in the paired pages table.For example, if
+ *	  page 0 and page 2 are paired together they form the first pair.
+ * @group: the group represent the bit position in the cell. For example,
+ *	   page 0 uses bit 0 and is thus part of group 0.
+ */
+struct mtd_pairing_info {
+	int pair;
+	int group;
+};
+
+/**
+ * struct mtd_pairing_scheme - Page pairing information
+ *
+ * @ngroups: number of groups. Should be related to the number of bits
+ *	     per cell.
+ * @get_info: get the paring info of a given write-unit (ie page). This
+ *	      function should fill the info struct passed in argument.
+ * @get_page: convert paring information into a write-unit (page) number.
+ */
+struct mtd_pairing_scheme {
+	int ngroups;
+	void (*get_info)(struct mtd_info *mtd, int wunit,
+			 struct mtd_pairing_info *info);
+	int (*get_wunit)(struct mtd_info *mtd,
+			 const struct mtd_pairing_info *info);
+};
+
 struct module;	/* only needed for owner field in mtd_info */
 
 struct mtd_info {
@@ -187,6 +217,9 @@ struct mtd_info {
 
 	/* OOB layout description */
 	const struct mtd_ooblayout_ops *ooblayout;
+
+	/* NAND pairing scheme, only provided for MLC/TLC NANDs */
+	const struct mtd_pairing_scheme *pairing;
 
 	/* the ecc step size. */
 	unsigned int ecc_step_size;
@@ -312,6 +345,32 @@ static inline int mtd_oobavail(struct mtd_info *mtd, struct mtd_oob_ops *ops)
 	return ops->mode == MTD_OPS_AUTO_OOB ? mtd->oobavail : mtd->oobsize;
 }
 
+static inline int mtd_offset_to_wunit(struct mtd_info *mtd, loff_t offs)
+{
+	if (mtd->erasesize_mask)
+		offs &= mtd->erasesize_mask;
+	else
+		offs = offs % mtd->erasesize;
+
+	if (mtd->writesize_shift)
+		offs >>= mtd->writesize_shift;
+	else
+		offs %= mtd->writesize;
+
+	return offs;
+}
+
+static inline loff_t mtd_wunit_to_offset(struct mtd_info *mtd, loff_t base,
+					 int wunit)
+{
+	return base + (wunit * mtd->writesize);
+}
+
+void mtd_wunit_to_pairing_info(struct mtd_info *mtd, int wunit,
+			       struct mtd_pairing_info *info);
+int mtd_pairing_info_to_wunit(struct mtd_info *mtd,
+			      const struct mtd_pairing_info *info);
+int mtd_pairing_groups_per_eb(struct mtd_info *mtd);
 int mtd_erase(struct mtd_info *mtd, struct erase_info *instr);
 int mtd_point(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
 	      void **virt, resource_size_t *phys);
@@ -395,6 +454,11 @@ static inline uint32_t mtd_mod_by_ws(uint64_t sz, struct mtd_info *mtd)
 	if (mtd->writesize_shift)
 		return sz & mtd->writesize_mask;
 	return do_div(sz, mtd->writesize);
+}
+
+static inline int mtd_wunit_per_eb(struct mtd_info *mtd)
+{
+	return mtd->erasesize / mtd->writesize;
 }
 
 static inline int mtd_has_oob(const struct mtd_info *mtd)
