@@ -376,6 +376,68 @@ static int mtd_reboot_notifier(struct notifier_block *n, unsigned long state,
 }
 
 /**
+ *	mtd_wunit_to_pairing_info - get pairing information of a wunit
+ *	@mtd: pointer to new MTD device info structure
+ *	@wunit: the write unit we are interrested in
+ *	@info: pairing information struct
+ *
+ *	Retrieve pairing information associated to the wunit.
+ *	This is mainly useful when dealing with MLC/TLC NANDs where pages
+ *	can be paired together, and where programming a page may influence
+ *	the page it is paired with.
+ *	The notion of page is replaced by the term wunit (write-unit).
+ */
+void mtd_wunit_to_pairing_info(struct mtd_info *mtd, int wunit,
+			       struct mtd_pairing_info *info)
+{
+	if (!mtd->pairing || !mtd->pairing->get_info) {
+		info->group = 0;
+		info->pair = wunit;
+	} else {
+		mtd->pairing->get_info(mtd, wunit, info);
+	}
+}
+EXPORT_SYMBOL_GPL(mtd_wunit_to_pairing_info);
+
+/**
+ *	mtd_wunit_to_pairing_info - get wunit from pairing information
+ *	@mtd: pointer to new MTD device info structure
+ *	@info: pairing information struct
+ *
+ *	Return a positive number representing the wunit associated to the
+ *	info struct, or a negative error code.
+ */
+int mtd_pairing_info_to_wunit(struct mtd_info *mtd,
+			      const struct mtd_pairing_info *info)
+{
+	if (!mtd->pairing || !mtd->pairing->get_info) {
+		if (info->group)
+			return -EINVAL;
+
+		return info->pair;
+	}
+
+	return mtd->pairing->get_wunit(mtd, info);
+}
+EXPORT_SYMBOL_GPL(mtd_pairing_info_to_wunit);
+
+/**
+ *	mtd_pairing_groups_per_eb - get the number of pairing groups per erase
+ *				    block
+ *	@mtd: pointer to new MTD device info structure
+ *
+ *	Return the number of pairing groups per erase block.
+ */
+int mtd_pairing_groups_per_eb(struct mtd_info *mtd)
+{
+	if (!mtd->pairing || !mtd->pairing->ngroups)
+		return 1;
+
+	return mtd->pairing->ngroups;
+}
+EXPORT_SYMBOL_GPL(mtd_pairing_groups_per_eb);
+
+/**
  *	add_mtd_device - register an MTD device
  *	@mtd: pointer to new MTD device info structure
  *
