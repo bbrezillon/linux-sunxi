@@ -4293,6 +4293,102 @@ static bool nand_ecc_strength_good(struct mtd_info *mtd)
 	return corr >= ds_corr && ecc->strength >= chip->ecc_strength_ds;
 }
 
+static void nand_pairing_dist3_get_info(struct mtd_info *mtd, int page,
+					struct mtd_pairing_info *info)
+{
+	int lastpage = (mtd->erasesize / mtd->writesize) - 1;
+	int dist = 3;
+
+	if (page == lastpage)
+		dist = 2;
+
+	if (!page || (page & 1)) {
+		info->group = 0;
+		info->pair = (page + 1) / 2;
+	} else {
+		info->group = 1;
+		info->pair = (page + 1 - dist) / 2;
+	}
+}
+
+static int nand_pairing_dist3_get_wunit(struct mtd_info *mtd,
+					const struct mtd_pairing_info *info)
+{
+	int lastpair = ((mtd->erasesize / mtd->writesize) - 1) / 2;
+	int page = info->pair * 2;
+	int dist = 3;
+
+	if (!info->group && !info->pair)
+		return 0;
+
+	if (info->pair == lastpair && info->group)
+		dist = 2;
+
+	if (!info->group)
+		page--;
+	else if (info->pair)
+		page += dist - 1;
+
+	if (page >= mtd->erasesize / mtd->writesize)
+		return -EINVAL;
+
+	return page;
+}
+
+const struct mtd_pairing_scheme dist3_pairing_scheme = {
+	.ngroups = 2,
+	.get_info = nand_pairing_dist3_get_info,
+	.get_wunit = nand_pairing_dist3_get_wunit,
+};
+EXPORT_SYMBOL_GPL(dist3_pairing_scheme);
+
+static void nand_pairing_dist6_get_info(struct mtd_info *mtd, int page,
+					struct mtd_pairing_info *info)
+{
+	int lastpage = (mtd->erasesize / mtd->writesize) - 1;
+	int half = page / 2;
+	int dist = 6;
+
+	if (half == lastpage / 2)
+		dist = 4;
+
+	if (!half  || (half & 1)) {
+		info->group = 0;
+		info->pair = (page + 2) / 2;
+	} else {
+		info->group = 1;
+		info->pair = (page + 2 - dist) / 2;
+	}
+}
+
+static int nand_pairing_dist6_get_wunit(struct mtd_info *mtd,
+				       const struct mtd_pairing_info *info)
+{
+	int lastpair = ((mtd->erasesize / mtd->writesize) - 1) / 2;
+	int page = info->pair * 2;
+	int dist = 6;
+
+	if (!info->group && !info->pair)
+		return 0;
+
+	if (info->pair >= lastpair - 1 && info->group)
+		dist = 4;
+
+	if (!info->group)
+		page += 2;
+	else
+		page += dist - 2;
+
+	return page;
+}
+
+const struct mtd_pairing_scheme dist6_pairing_scheme = {
+	.ngroups = 2,
+	.get_info = nand_pairing_dist6_get_info,
+	.get_wunit = nand_pairing_dist6_get_wunit,
+};
+EXPORT_SYMBOL_GPL(dist6_pairing_scheme);
+
 /**
  * nand_scan_tail - [NAND Interface] Scan for the NAND device
  * @mtd: MTD device structure
