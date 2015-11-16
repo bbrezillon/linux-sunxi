@@ -1094,7 +1094,7 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 			 struct ubi_vid_hdr *vid_hdr)
 {
-	int err;
+	int err, offs;
 	uint32_t crc;
 	void *p;
 
@@ -1120,7 +1120,30 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 	p = (char *)vid_hdr - ubi->vid_hdr_shift;
 	err = ubi_io_write(ubi, p, pnum, ubi->vid_hdr_aloffset,
 			   ubi->vid_hdr_alsize);
-	return err;
+	if (err)
+		return err;
+
+	/* Fill lower pages */
+	for (offs = ubi->vid_hdr_aloffset + ubi->vid_hdr_alsize;
+	     offs < ubi->leb_start; offs += ubi->min_io_size) {
+		struct nand_pairing_info pairing_info;
+		int wunit = offs / ubi->min_io_size;
+
+		mtd_wunit_to_pairing_info(ubi->mtd, wunit, &pairing_info);
+
+		/*
+		 * Do not write on wunits paired with the one used for the
+		 * EC and VID headers.
+		 */
+		if (pairing_info.pair < 2)
+			continue;
+
+		err = ubi_io_write(ubi, p, pnum, offs, ubi->min_io_size);
+		if (err)
+			return err;
+	}
+
+	return 0;
 }
 
 /**
