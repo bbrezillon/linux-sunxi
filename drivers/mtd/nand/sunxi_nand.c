@@ -1538,21 +1538,6 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 		}
 	}
 
-	timings = onfi_async_timing_mode_to_sdr_timings(0);
-	if (IS_ERR(timings)) {
-		ret = PTR_ERR(timings);
-		dev_err(dev,
-			"could not retrieve timings for ONFI mode 0: %d\n",
-			ret);
-		return ret;
-	}
-
-	ret = sunxi_nand_chip_set_timings(chip, timings);
-	if (ret) {
-		dev_err(dev, "could not configure chip timings: %d\n", ret);
-		return ret;
-	}
-
 	nand = &chip->nand;
 	/* Default tR value specified in the ONFI spec (chapter 4.15.1) */
 	nand->chip_delay = 200;
@@ -1572,6 +1557,21 @@ static int sunxi_nand_chip_init(struct device *dev, struct sunxi_nfc *nfc,
 	mtd = &chip->mtd;
 	mtd->dev.parent = dev;
 	mtd->priv = nand;
+
+	timings = onfi_async_timing_mode_to_sdr_timings(0);
+	if (IS_ERR(timings)) {
+		ret = PTR_ERR(timings);
+		dev_err(dev,
+			"could not retrieve timings for ONFI mode 0: %d\n",
+			ret);
+		return ret;
+	}
+
+	ret = sunxi_nand_chip_set_timings(chip, timings);
+	if (ret) {
+		dev_err(dev, "could not configure chip timings: %d\n", ret);
+		return ret;
+	}
 
 	ret = nand_scan_ident(mtd, nsels, NULL);
 	if (ret)
