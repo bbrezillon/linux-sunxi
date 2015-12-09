@@ -1622,6 +1622,7 @@ EXPORT_SYMBOL(denali_init);
 /* driver exit point */
 void denali_remove(struct denali_nand_info *denali)
 {
+	nand_release(&denali->mtd);
 	denali_irq_cleanup(denali->irq, denali);
 	dma_unmap_single(denali->dev, denali->buf.dma_buf,
 			 denali->mtd.writesize + denali->mtd.oobsize,
