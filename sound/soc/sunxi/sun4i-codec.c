@@ -2,7 +2,6 @@
  * Copyright 2014 Emilio López <emilio@elopez.com.ar>
  * Copyright 2014 Jon Smirl <jonsmirl@gmail.com>
  * Copyright 2015 Maxime Ripard <maxime.ripard@free-electrons.com>
- * Copyright 2015 Adam Sampson <ats@offog.org>
  *
  * Based on the Allwinner SDK driver, released under the GPL.
  *
@@ -554,21 +553,10 @@ static const struct snd_kcontrol_new sun4i_codec_pa_mixer_controls[] = {
 };
 
 static const struct snd_soc_dapm_widget sun4i_codec_dapm_widgets[] = {
-	/* Digital parts of the ADCs */
-	SND_SOC_DAPM_SUPPLY("ADC", SUN4I_CODEC_ADC_FIFOC,
-			    SUN4I_CODEC_ADC_FIFOC_EN_AD, 0,
-			    NULL, 0),
-
 	/* Digital parts of the DACs */
 	SND_SOC_DAPM_SUPPLY("DAC", SUN4I_CODEC_DAC_DPC,
 			    SUN4I_CODEC_DAC_DPC_EN_DA, 0,
 			    NULL, 0),
-
-	/* Analog parts of the ADCs */
-	SND_SOC_DAPM_ADC("Left ADC", "Codec Capture", SUN4I_CODEC_ADC_ACTL,
-			 SUN4I_CODEC_ADC_ACTL_ADC_L_EN, 0),
-	SND_SOC_DAPM_ADC("Right ADC", "Codec Capture", SUN4I_CODEC_ADC_ACTL,
-			 SUN4I_CODEC_ADC_ACTL_ADC_R_EN, 0),
 
 	/* Analog parts of the DACs */
 	SND_SOC_DAPM_DAC("Left DAC", "Codec Playback", SUN4I_CODEC_DAC_ACTL,
