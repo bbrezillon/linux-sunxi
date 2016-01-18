@@ -247,6 +247,20 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 		goto out_acc;
 	}
 
+#ifdef CONFIG_UBI_EXTENDED_PEB
+	/*
+	 * TODO: check in the underlying MTD device has a page pairing scheme
+	 * requiring the consolidated bitmap creation.
+	 */
+	vol->consolidated = kzalloc(DIV_ROUND_UP(vol->reserved_pebs,
+						 BITS_PER_LONG),
+				    GFP_KERNEL);
+	if (!vol->consolidated) {
+		err = -ENOMEM;
+		goto out_mapping;
+	}
+#endif
+
 	for (i = 0; i < vol->reserved_pebs; i++)
 		vol->eba_tbl[i] = UBI_LEB_UNMAPPED;
 
@@ -328,8 +342,12 @@ out_sysfs:
 out_cdev:
 	cdev_del(&vol->cdev);
 out_mapping:
-	if (do_free)
+	if (do_free) {
 		kfree(vol->eba_tbl);
+#ifdef CONFIG_UBI_EXTENDED_PEB
+		kfree(vol->consolidated);
+#endif
+	}
 out_acc:
 	spin_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= vol->reserved_pebs;
@@ -428,6 +446,9 @@ out_unlock:
 int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 {
 	int i, err, pebs, *new_mapping;
+#ifdef CONFIG_UBI_EXTENDED_PEB
+	unsigned long *new_consolidated = NULL;
+#endif
 	struct ubi_volume *vol = desc->vol;
 	struct ubi_device *ubi = vol->ubi;
 	struct ubi_vtbl_record vtbl_rec;
@@ -453,6 +474,15 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	new_mapping = kmalloc(reserved_pebs * sizeof(int), GFP_KERNEL);
 	if (!new_mapping)
 		return -ENOMEM;
+
+#ifdef CONFIG_UBI_EXTENDED_PEB
+	new_consolidated = kzalloc(DIV_ROUND_UP(reserved_pebs, BITS_PER_LONG),
+				   GFP_KERNEL);
+	if (!new_consolidated) {
+		err = -ENOMEM;
+		goto out_free;
+	}
+#endif
 
 	for (i = 0; i < reserved_pebs; i++)
 		new_mapping[i] = UBI_LEB_UNMAPPED;
@@ -485,6 +515,13 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 			new_mapping[i] = vol->eba_tbl[i];
 		kfree(vol->eba_tbl);
 		vol->eba_tbl = new_mapping;
+
+#ifdef CONFIG_UBI_EXTENDED_PEB
+		memcpy(new_consolidated, vol->consolidated,
+		       DIV_ROUND_UP(vol->reserved_pebs, BITS_PER_LONG));
+		kfree(vol->consolidated);
+		vol->consolidated = new_consolidated;
+#endif
 		spin_unlock(&ubi->volumes_lock);
 	}
 
@@ -509,6 +546,13 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 			new_mapping[i] = vol->eba_tbl[i];
 		kfree(vol->eba_tbl);
 		vol->eba_tbl = new_mapping;
+
+#ifdef CONFIG_UBI_EXTENDED_PEB
+		memcpy(new_consolidated, vol->consolidated,
+		       DIV_ROUND_UP(reserved_pebs, BITS_PER_LONG));
+		kfree(vol->consolidated);
+		vol->consolidated = new_consolidated;
+#endif
 		spin_unlock(&ubi->volumes_lock);
 	}
 
@@ -532,6 +576,9 @@ out_acc:
 		spin_unlock(&ubi->volumes_lock);
 	}
 out_free:
+#ifdef CONFIG_UBI_EXTENDED_PEB
+	kfree(new_consolidated);
+#endif
 	kfree(new_mapping);
 	return err;
 }

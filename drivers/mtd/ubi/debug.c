@@ -36,7 +36,7 @@ void ubi_dump_flash(struct ubi_device *ubi, int pnum, int offset, int len)
 	int err;
 	size_t read;
 	void *buf;
-	loff_t addr = (loff_t)pnum * ubi->peb_size + offset;
+	loff_t addr = (loff_t)pnum * ubi->consolidated_peb_size + offset;
 
 	buf = vmalloc(len);
 	if (!buf)

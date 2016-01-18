@@ -163,6 +163,18 @@ enum {
 };
 
 /**
+ * struct ubi_leb_desc - UBI logical eraseblock description.
+ * @vol_id: volume ID of the locked logical eraseblock
+ * @lnum: locked logical eraseblock number
+ *
+ * This data structure is used in describe a logical eraseblock.
+ */
+struct ubi_leb_desc {
+	int vol_id;
+	int lnum;
+};
+
+/**
  * struct ubi_wl_entry - wear-leveling entry.
  * @u.rb: link in the corresponding (free/used) RB-tree
  * @u.list: link in the protection queue
@@ -260,6 +272,18 @@ struct ubi_fm_pool {
 	int used;
 	int size;
 	int max_size;
+};
+
+/**
+ * struct ubi_consolidable_leb - UBI consolidable LEB.
+ * @list: links RB-tree nodes
+ * @vol_id: volume ID
+ * @lnum: locked logical eraseblock number
+ */
+struct ubi_consolidable_leb {
+	struct list_head list;
+	int vol_id;
+	int lnum;
 };
 
 /**
@@ -557,6 +581,9 @@ struct ubi_device {
 	unsigned long long global_sqnum;
 	spinlock_t ltree_lock;
 	struct rb_root ltree;
+	int max_lebs_per_peb;
+	struct list_head consolidable;
+	struct ubi_leb_desc **consolidated;
 	struct mutex alc_mutex;
 
 	/* Fastmap stuff */
@@ -597,6 +624,7 @@ struct ubi_device {
 	long long flash_size;
 	int peb_count;
 	int peb_size;
+	int consolidated_peb_size;
 	int bad_peb_count;
 	int good_peb_count;
 	int corr_peb_count;
@@ -863,8 +891,12 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi);
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
 		int len);
+int ubi_io_raw_read(const struct ubi_device *ubi, void *buf, int pnum,
+		    int offset, int len);
 int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 		 int len);
+int ubi_io_raw_write(struct ubi_device *ubi, const void *buf, int pnum,
+		     int offset, int len);
 int ubi_io_sync_erase(struct ubi_device *ubi, int pnum, int torture);
 int ubi_io_is_bad(const struct ubi_device *ubi, int pnum);
 int ubi_io_mark_bad(const struct ubi_device *ubi, int pnum);
@@ -874,8 +906,13 @@ int ubi_io_write_ec_hdr(struct ubi_device *ubi, int pnum,
 			struct ubi_ec_hdr *ec_hdr);
 int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 			struct ubi_vid_hdr *vid_hdr, int verbose);
+int ubi_io_read_vid_hdrs(struct ubi_device *ubi, int pnum,
+			 struct ubi_vid_hdr *vid_hdrs, int *num,
+			 int verbose);
 int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 			 struct ubi_vid_hdr *vid_hdr);
+int ubi_io_write_vid_hdrs(struct ubi_device *ubi, int pnum,
+			  struct ubi_vid_hdr *vid_hdrs, int num);
 
 /* build.c */
 int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,

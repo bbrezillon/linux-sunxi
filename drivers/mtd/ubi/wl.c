@@ -1515,6 +1515,14 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	if (!ubi->lookuptbl)
 		return err;
 
+	/* FIXME: make this creation optional. */
+	ubi->consolidated = kzalloc(ubi->peb_count * sizeof(void *),
+				    GFP_KERNEL);
+	if (!ubi->consolidated) {
+		kfree(ubi->lookuptbl);
+		return err;
+	}
+
 	for (i = 0; i < UBI_PROT_QUEUE_LEN; i++)
 		INIT_LIST_HEAD(&ubi->pq[i]);
 	ubi->pq_head = 0;
@@ -1624,6 +1632,7 @@ out_free:
 	tree_destroy(ubi, &ubi->used);
 	tree_destroy(ubi, &ubi->free);
 	tree_destroy(ubi, &ubi->scrub);
+	kfree(ubi->consolidated);
 	kfree(ubi->lookuptbl);
 	return err;
 }
@@ -1660,6 +1669,7 @@ void ubi_wl_close(struct ubi_device *ubi)
 	tree_destroy(ubi, &ubi->free);
 	tree_destroy(ubi, &ubi->scrub);
 	kfree(ubi->lookuptbl);
+	kfree(ubi->consolidated);
 }
 
 /**
