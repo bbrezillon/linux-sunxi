@@ -563,12 +563,12 @@ static int recover_peb(struct ubi_device *ubi, int pnum, int vol_id, int lnum,
 	if (!vid_hdr)
 		return -ENOMEM;
 
-	down_read(&ubi->fm_eba_sem);
 retry:
 	new_pnum = ubi_wl_get_peb(ubi);
 	if (new_pnum < 0) {
-		err = new_pnum;
-		goto out_free_vid_hdr;
+		ubi_free_vid_hdr(ubi, vid_hdr);
+		up_read(&ubi->fm_eba_sem);
+		return new_pnum;
 	}
 
 	ubi_msg(ubi, "recover PEB %d, move data to PEB %d",
@@ -578,13 +578,16 @@ retry:
 	if (err && err != UBI_IO_BITFLIPS) {
 		if (err > 0)
 			err = -EIO;
+		up_read(&ubi->fm_eba_sem);
 		goto out_put;
 	}
 
 	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
 	err = ubi_io_write_vid_hdr(ubi, new_pnum, vid_hdr);
-	if (err)
+	if (err) {
+		up_read(&ubi->fm_eba_sem);
 		goto write_error;
+	}
 
 	data_size = offset + len;
 	mutex_lock(&ubi->buf_mutex);
@@ -593,17 +596,22 @@ retry:
 	/* Read everything before the area where the write failure happened */
 	if (offset > 0) {
 		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset);
-		if (err && err != UBI_IO_BITFLIPS)
+		if (err && err != UBI_IO_BITFLIPS) {
+			up_read(&ubi->fm_eba_sem);
 			goto out_unlock;
+		}
 	}
 
 	memcpy(ubi->peb_buf + offset, buf, len);
 
 	err = ubi_io_write_data(ubi, ubi->peb_buf, new_pnum, 0, data_size);
-	mutex_unlock(&ubi->buf_mutex);
-	if (err)
+	if (err) {
+		mutex_unlock(&ubi->buf_mutex);
+		up_read(&ubi->fm_eba_sem);
 		goto write_error;
+	}
 
+	mutex_unlock(&ubi->buf_mutex);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 
 	vol->eba_tbl[lnum] = new_pnum;
@@ -617,9 +625,7 @@ out_unlock:
 	mutex_unlock(&ubi->buf_mutex);
 out_put:
 	ubi_wl_put_peb(ubi, vol_id, lnum, new_pnum, 1);
-out_free_vid_hdr:
 	ubi_free_vid_hdr(ubi, vid_hdr);
-	up_read(&ubi->fm_eba_sem);
 	return err;
 
 write_error:
@@ -629,36 +635,12 @@ write_error:
 	 */
 	ubi_warn(ubi, "failed to write to PEB %d", new_pnum);
 	ubi_wl_put_peb(ubi, vol_id, lnum, new_pnum, 1);
-	if (++tries > UBI_IO_RETRIES)
-		goto out_free_vid_hdr;
-	ubi_msg(ubi, "try again");
-	goto retry;
-}
-
-int ubi_io_write_vid_and_data(struct ubi_device *ubi, int pnum,
-			      struct ubi_vid_hdr *vid_hdr,
-			      const void *buf, int len)
-{
-	dbg_eba("write VID hdr and %d bytes at offset %d of LEB %d:%d, PEB %d",
-		len, 0, vol_id, lnum, pnum);
-                                                                                   
-	err = ubi_io_write_vid_hdr(ubi, pnum, vid_hdr);
-	if (err) {
-		ubi_warn(ubi, "failed to write VID header to LEB %d:%d, PEB %d",
-			 vol_id, lnum, pnum);
+	if (++tries > UBI_IO_RETRIES) {
+		ubi_free_vid_hdr(ubi, vid_hdr);
 		return err;
 	}
-
-	if (len) {
-		err = ubi_io_write_data(ubi, buf, pnum, 0, len);
-		if (err) {
-			ubi_warn(ubi, "failed to write %d bytes at offset %d of LEB %d:%d, PEB %d",
-				 len, 0, vol_id, lnum, pnum);
-			return err;
-		}
-	}
-
-	return 0;
+	ubi_msg(ubi, "try again");
+	goto retry;
 }
 
 /**
@@ -702,7 +684,8 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 			if (err)
 				ubi_ro_mode(ubi);
 		}
-		goto out_leb_write_unlock;
+		leb_write_unlock(ubi, vol_id, lnum);
+		return err;
 	}
 
 	/*
@@ -711,8 +694,8 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	 */
 	vid_hdr = ubi_zalloc_vid_hdr(ubi, GFP_NOFS);
 	if (!vid_hdr) {
-		err = -ENOMEM;
-		goto out_leb_write_unlock;
+		leb_write_unlock(ubi, vol_id, lnum);
+		return -ENOMEM;
 	}
 
 	vid_hdr->vol_type = UBI_VID_DYNAMIC;
@@ -722,12 +705,13 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
 	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
 
-	down_read(&ubi->fm_eba_sem);
 retry:
 	pnum = ubi_wl_get_peb(ubi);
 	if (pnum < 0) {
-		err = pnum;
-		goto out_fm_eba_unlock;
+		ubi_free_vid_hdr(ubi, vid_hdr);
+		leb_write_unlock(ubi, vol_id, lnum);
+		up_read(&ubi->fm_eba_sem);
+		return pnum;
 	}
 
 	dbg_eba("write VID hdr and %d bytes at offset %d of LEB %d:%d, PEB %d",
@@ -737,6 +721,7 @@ retry:
 	if (err) {
 		ubi_warn(ubi, "failed to write VID header to LEB %d:%d, PEB %d",
 			 vol_id, lnum, pnum);
+		up_read(&ubi->fm_eba_sem);
 		goto write_error;
 	}
 
@@ -745,24 +730,24 @@ retry:
 		if (err) {
 			ubi_warn(ubi, "failed to write %d bytes at offset %d of LEB %d:%d, PEB %d",
 				 len, offset, vol_id, lnum, pnum);
+			up_read(&ubi->fm_eba_sem);
 			goto write_error;
 		}
 	}
 
 	vol->eba_tbl[lnum] = pnum;
-
-out_fm_eba_unlock:
 	up_read(&ubi->fm_eba_sem);
-	ubi_free_vid_hdr(ubi, vid_hdr);
 
-out_leb_write_unlock:
 	leb_write_unlock(ubi, vol_id, lnum);
-	return err;
+	ubi_free_vid_hdr(ubi, vid_hdr);
+	return 0;
 
 write_error:
 	if (err != -EIO || !ubi->bad_allowed) {
 		ubi_ro_mode(ubi);
-		goto out_fm_eba_unlock;
+		leb_write_unlock(ubi, vol_id, lnum);
+		ubi_free_vid_hdr(ubi, vid_hdr);
+		return err;
 	}
 
 	/*
@@ -773,7 +758,9 @@ write_error:
 	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
 	if (err || ++tries > UBI_IO_RETRIES) {
 		ubi_ro_mode(ubi);
-		goto out_fm_eba_unlock;
+		leb_write_unlock(ubi, vol_id, lnum);
+		ubi_free_vid_hdr(ubi, vid_hdr);
+		return err;
 	}
 
 	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
@@ -841,12 +828,12 @@ int ubi_eba_write_leb_st(struct ubi_device *ubi, struct ubi_volume *vol,
 	vid_hdr->used_ebs = cpu_to_be32(used_ebs);
 	vid_hdr->data_crc = cpu_to_be32(crc);
 
-	down_read(&ubi->fm_eba_sem);
 retry:
 	pnum = ubi_wl_get_peb(ubi);
 	if (pnum < 0) {
 		ubi_free_vid_hdr(ubi, vid_hdr);
 		leb_write_unlock(ubi, vol_id, lnum);
+		up_read(&ubi->fm_eba_sem);
 		return pnum;
 	}
 

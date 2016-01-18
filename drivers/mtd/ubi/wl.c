@@ -1804,25 +1804,32 @@ static int produce_free_peb(struct ubi_device *ubi)
  *
  * This function returns a physical eraseblock in case of success and a
  * negative error code in case of failure.
- * This function must be called with ubi->fm_eba_sem held in read mode!
+ * Returns with ubi->fm_eba_sem held in read mode!
  */
 int ubi_wl_get_peb(struct ubi_device *ubi)
 {
 	int err;
 	struct ubi_wl_entry *e;
 
+retry:
+	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
-	while (!ubi->free.rb_node) {
+	if (!ubi->free.rb_node) {
 		if (ubi->works_count == 0) {
 			ubi_err(ubi, "no free eraseblocks");
 			ubi_assert(list_empty(&ubi->works));
-			err = -ENOSPC;
-			goto err_unlock;
+			spin_unlock(&ubi->wl_lock);
+			return -ENOSPC;
 		}
 
 		err = produce_free_peb(ubi);
-		if (err < 0)
-			goto err_unlock;
+		if (err < 0) {
+			spin_unlock(&ubi->wl_lock);
+			return err;
+		}
+		spin_unlock(&ubi->wl_lock);
+		up_read(&ubi->fm_eba_sem);
+		goto retry;
 
 	}
 	e = wl_get_wle(ubi);
@@ -1837,11 +1844,6 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 	}
 
 	return e->pnum;
-
-err_unlock:
-	spin_unlock(&ubi->wl_lock);
-	return err;
-
 }
 #else
 #include "fastmap-wl.c"
