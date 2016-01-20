@@ -311,6 +311,142 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 	spin_unlock(&ubi->ltree_lock);
 }
 
+
+static int add_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
+{
+	struct ubi_full_leb *fleb;
+
+	/*
+	 * We don't track full LEBs if we don't need to (which is the case
+	 * when UBI does not need or does not support LEB consolidation).
+	 */
+	if (!ubi->consolidated)
+		return 0;
+
+	fleb = kzalloc(sizeof(*fleb), GFP_KERNEL);
+	if (!fleb)
+		return -ENOMEM;
+
+	fleb->desc.vol_id = vol_id;
+	fleb->desc.lnum = lnum;
+
+	spin_lock(&ubi->full_lock);
+	list_add_tail(&fleb->node, &ubi->full);
+	ubi->full_count++;
+	spin_unlock(&ubi->full_lock);
+
+	return 0;
+}
+
+static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
+{
+	struct ubi_leb_desc *clebs;
+	struct ubi_full_leb *fleb;
+	LIST_HEAD(full);
+	int i, err = 0;
+	/*
+	 * We don't track full LEBs if we don't need to (which is the case
+	 * UBI does not need or does not support LEB consolidation).
+	 */
+	if (!ubi->consolidated)
+		return ERR_PTR(-ENOTSUPP);
+
+	spin_lock(&ubi->full_lock);
+	if (ubi->full_count < ubi->lebs_per_consolidate_peb)
+		err = -EAGAIN;
+	spin_unlock(&ubi->full_lock);
+	if (err)
+		return ERR_PTR(err);
+
+	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidate_peb, GFP_KERNEL);
+	if (!clebs)
+		return ERR_PTR(-ENOMEM);
+
+	for (i = 0; i < ubi->lebs_per_consolidate_peb;) {
+		bool retry = true;
+
+		spin_lock(&ubi->full_lock);
+		fleb = list_first_entry_or_null(&ubi->full,
+						struct ubi_full_leb, node);
+		clebs[i] = fleb->desc;
+		spin_unlock(&ubi->full_lock);
+
+		if (!fleb) {
+			err = -EAGAIN;
+			goto err;
+		}
+
+		err = leb_read_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
+		if (err)
+			goto err;
+
+		spin_lock(&ubi->full_lock);
+		if (fleb == list_first_entry_or_null(&ubi->full,
+						     struct ubi_full_leb,
+						     node)) {
+			list_del(&fleb->node);
+			list_add_tail(&fleb->node, &full);
+			ubi->full_count--;
+			retry = false;
+		}
+		spin_unlock(&ubi->full_lock);
+
+		if (retry) {
+			leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+			continue;
+		}
+
+		i++;
+	}
+
+
+	while(!list_empty(&full)) {
+		fleb = list_first_entry(&full, struct ubi_full_leb, node);
+		list_del(&fleb->node);
+		kfree(fleb);
+	}
+
+	return clebs;
+
+err:
+	spin_lock(&ubi->full_lock);
+	for (i--; i >= 0; i--)
+		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+	list_splice(&full, &ubi->full);
+	ubi->full_count += i;
+	spin_unlock(&ubi->full_lock);
+	kfree(clebs);
+
+	return ERR_PTR(err);
+}
+
+static bool consolidation_needed(struct ubi_device *ubi)
+{
+	bool ret;
+
+	spin_lock(&ubi->full_lock);
+	ret = ubi->consolidation_threshold <= ubi->full_count;
+	spin_unlock(&ubi->full_lock);
+
+	return ret;
+}
+
+static void remove_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
+{
+	struct ubi_full_leb *fleb;
+
+	spin_lock(&ubi->full_lock);
+	list_for_each_entry(fleb, &ubi->full, node) {
+		if (fleb->desc.lnum == lnum && fleb->desc.vol_id == vol_id) {
+			ubi->full_count--;
+			list_del(&fleb->node);
+			kfree(fleb);
+			break;
+		}
+	}
+	spin_unlock(&ubi->full_lock);
+}
+
 static struct ubi_leb_desc *
 ubi_eba_get_consolidated(struct ubi_device *ubi, int pnum)
 {
@@ -318,6 +454,32 @@ ubi_eba_get_consolidated(struct ubi_device *ubi, int pnum)
 		return ubi->consolidated[pnum];
 
 	return NULL;
+}
+
+static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
+				   int vol_id, int lnum)
+{
+	struct ubi_leb_desc *clebs = NULL;
+	int i;
+
+	if (!ubi->consolidated)
+		return true;
+
+	clebs = ubi->consolidated[pnum];
+	if (!clebs)
+		return true;
+
+	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
+		if (clebs[i].lnum == lnum && clebs[i].vol_id == vol_id) {
+		    clebs[i].lnum = -1;
+		    clebs[i].vol_id = -1;
+		}
+
+		if (clebs[i].lnum >= 0 && clebs[i].vol_id)
+			return false;
+	}
+
+	return true;
 }
 
 /**
@@ -334,7 +496,6 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		      int lnum)
 {
 	int err, pnum, vol_id = vol->vol_id;
-	struct ubi_leb_desc *ldesc = NULL;
 	bool release_peb = true;
 
 	if (ubi->ro_mode)
@@ -353,27 +514,14 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 
 	down_read(&ubi->fm_eba_sem);
 	vol->eba_tbl[lnum] = UBI_LEB_UNMAPPED;
-	ldesc = ubi_eba_get_consolidated(ubi, pnum);
-	if (ldesc) {
-		int i;
-
-		for (i = 0; i < ubi->max_lebs_per_peb; i++) {
-			if (ldesc[i].lnum == lnum &&
-			    ldesc[i].vol_id == vol->vol_id) {
-				ldesc[i].lnum = -1;
-				ldesc[i].vol_id = -1;
-			}
-
-			if (ldesc[i].lnum >= 0 && ldesc[i].vol_id)
-				release_peb = false;
-		}
-	}
-
+	release_peb = ubi_eba_invalidate_leb(ubi, pnum, vol_id, lnum);
 	up_read(&ubi->fm_eba_sem);
 	if (release_peb)
 		err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
 	else
 		err = 0;
+
+	remove_full_leb(ubi, vol_id, lnum);
 
 out_unlock:
 	leb_write_unlock(ubi, vol_id, lnum);
@@ -693,9 +841,12 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	int err, pnum, tries = 0, vol_id = vol->vol_id;
 	struct ubi_vid_hdr *vid_hdr;
 	struct ubi_leb_desc *clebs;
+	bool full;
 
 	if (ubi->ro_mode)
 		return -EROFS;
+
+	full = (offset + len > ubi->leb_size - ubi->min_io_size);
 
 	err = leb_write_lock(ubi, vol_id, lnum);
 	if (err)
@@ -719,7 +870,22 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 			if (err)
 				ubi_ro_mode(ubi);
 		}
+
+		if (full) {
+			int ret;
+
+			ret = add_full_leb(ubi, vol_id, lnum);
+			if (ret)
+				ubi_warn(ubi,
+					 "failed to add LEB %d:%d to the full LEB list",
+					 vol_id, lnum);
+		}
+
 		leb_write_unlock(ubi, vol_id, lnum);
+
+		if (full && !err && consolidation_needed(ubi))
+			ubi_reschedule_work(ubi, &ubi->consolidation_work);
+
 		return err;
 	}
 
@@ -773,8 +939,20 @@ retry:
 	vol->eba_tbl[lnum] = pnum;
 	up_read(&ubi->fm_eba_sem);
 
+	if (full) {
+		err = add_full_leb(ubi, vol_id, lnum);
+		if (err)
+			ubi_warn(ubi,
+				 "failed to add LEB %d:%d to the full LEB list",
+				 vol_id, lnum);
+	}
+
 	leb_write_unlock(ubi, vol_id, lnum);
 	ubi_free_vid_hdr(ubi, vid_hdr);
+
+	if (full && consolidation_needed(ubi))
+		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+
 	return 0;
 
 write_error:
@@ -895,8 +1073,17 @@ retry:
 	vol->eba_tbl[lnum] = pnum;
 	up_read(&ubi->fm_eba_sem);
 
+	err = add_full_leb(ubi, vol_id, lnum);
+	if (err)
+		ubi_warn(ubi, "failed to add LEB %d:%d to the full LEB list",
+			 vol_id, lnum);
+
 	leb_write_unlock(ubi, vol_id, lnum);
 	ubi_free_vid_hdr(ubi, vid_hdr);
+
+	if (consolidation_needed(ubi))
+		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+
 	return 0;
 
 write_error:
@@ -947,7 +1134,9 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 {
 	int err, pnum, old_pnum, tries = 0, vol_id = vol->vol_id;
 	struct ubi_vid_hdr *vid_hdr;
+	bool release_peb = false;
 	uint32_t crc;
+	bool full;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -962,6 +1151,8 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 			return err;
 		return ubi_eba_write_leb(ubi, vol, lnum, NULL, 0, 0);
 	}
+
+	full = (len > ubi->leb_size - ubi->min_io_size);
 
 	vid_hdr = ubi_zalloc_vid_hdr(ubi, GFP_NOFS);
 	if (!vid_hdr)
@@ -1013,12 +1204,25 @@ retry:
 
 	old_pnum = vol->eba_tbl[lnum];
 	vol->eba_tbl[lnum] = pnum;
+	if (old_pnum >= 0)
+		release_peb = ubi_eba_invalidate_leb(ubi, old_pnum, vol_id, lnum);
 	up_read(&ubi->fm_eba_sem);
 
-	if (old_pnum >= 0) {
+	if (release_peb) {
 		err = ubi_wl_put_peb(ubi, vol_id, lnum, old_pnum, 0);
 		if (err)
 			goto out_leb_unlock;
+	}
+
+	remove_full_leb(ubi, vol_id, lnum);
+	if (full) {
+		int ret;
+
+		ret = add_full_leb(ubi, vol_id, lnum);
+		if (ret)
+			ubi_warn(ubi,
+				"failed to add LEB %d:%d to the full LEB list",
+				vol_id, lnum);
 	}
 
 out_leb_unlock:
@@ -1026,6 +1230,10 @@ out_leb_unlock:
 out_mutex:
 	mutex_unlock(&ubi->alc_mutex);
 	ubi_free_vid_hdr(ubi, vid_hdr);
+
+	if (full && !err && consolidation_needed(ubi))
+		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+
 	return err;
 
 write_error:
@@ -1277,51 +1485,35 @@ out_unlock_leb:
 	return err;
 }
 
-static int consolidation_lock(struct ubi_device *ubi,
-			      struct ubi_leb_desc *clebs)
-{
-	int i, err;
-
-	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
-		err = leb_write_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
-		if (err)
-			goto err_unlock;
-	}
-
-	return 0;
-
-err_unlock:
-	for (i--; i >= 0; i--)
-		leb_write_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
-
-	return err;
-}
-
 static void consolidation_unlock(struct ubi_device *ubi,
 				 struct ubi_leb_desc *clebs)
 {
 	int i;
 
-	for (i = 0; i < ubi->max_lebs_per_peb; i++)
-		leb_write_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++)
+		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
 }
 
-int ubi_eba_consolidate_lebs(struct ubi_device *ubi, struct ubi_leb_desc *clebs)
+static int consolidate_lebs(struct ubi_device *ubi)
 {
 	int i, pnum, offset = ubi->leb_start, err = 0;
 	struct ubi_vid_hdr *vid_hdrs;
+	struct ubi_leb_desc *clebs;
 
 	ubi_assert(ubi->consolidated);
 
-	err = consolidation_lock(ubi, clebs);
-	if (err)
-		return err;
+	if (consolidation_needed(ubi))
+		return 0;
+
+	clebs = find_consolidable_lebs(ubi);
+	if (IS_ERR(clebs))
+		return PTR_ERR(clebs);
 
 	mutex_lock(&ubi->buf_mutex);
 
 	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset;
 
-	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 		int spnum = vol->eba_tbl[lnum];
@@ -1361,7 +1553,7 @@ int ubi_eba_consolidate_lebs(struct ubi_device *ubi, struct ubi_leb_desc *clebs)
 		goto out_unlock_fm_eba;
 	}
 
-	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->max_lebs_per_peb);
+	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->lebs_per_consolidate_peb);
 	if (err) {
 		ubi_warn(ubi, "failed to write VID headers to PEB %d",
 			 pnum);
@@ -1378,7 +1570,7 @@ int ubi_eba_consolidate_lebs(struct ubi_device *ubi, struct ubi_leb_desc *clebs)
 	}
 
 	ubi->consolidated[pnum] = clebs;
-	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 
@@ -1389,9 +1581,32 @@ out_unlock_fm_eba:
 	up_read(&ubi->fm_eba_sem);
 out:
 	mutex_unlock(&ubi->buf_mutex);
+	if (err) {
+		for (i = 0; i < ubi->lebs_per_consolidate_peb; i++)
+			add_full_leb(ubi, clebs[i].vol_id, clebs[i].lnum);
+	}
 	consolidation_unlock(ubi, clebs);
 
 	return err;
+}
+
+static int consolidation_worker(struct ubi_device *ubi,
+				struct ubi_work *wrk,
+				int shutdown)
+{
+	int ret;
+
+	if (shutdown)
+		return 0;
+
+	ret = consolidate_lebs(ubi);
+	if (ret == -EAGAIN)
+		ret = 0;
+
+	if (consolidation_needed(ubi))
+		ubi_reschedule_work(ubi, wrk);
+
+	return ret;
 }
 
 /**
@@ -1553,6 +1768,13 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	mutex_init(&ubi->alc_mutex);
 	ubi->ltree = RB_ROOT;
 
+	spin_lock_init(&ubi->full_lock);
+	INIT_LIST_HEAD(&ubi->full);
+	ubi->full_count = 0;
+	ubi->consolidation_work.func = consolidation_worker;
+	INIT_LIST_HEAD(&ubi->consolidation_work.list);
+	ubi->consolidation_threshold = ubi->lebs_per_consolidate_peb;
+
 	ubi->global_sqnum = ai->max_sqnum + 1;
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
 
@@ -1578,14 +1800,17 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			continue;
 
 		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb) {
-			if (aeb->lnum >= vol->reserved_pebs)
+			if (aeb->lnum >= vol->reserved_pebs) {
 				/*
 				 * This may happen in case of an unclean reboot
 				 * during re-size.
 				 */
 				ubi_move_aeb_to_list(av, aeb, &ai->erase);
-			else
+			} else {
 				vol->eba_tbl[aeb->lnum] = aeb->pnum;
+				if (aeb->full)
+					add_full_leb(ubi, vol->vol_id, aeb->lnum);
+			}
 		}
 	}
 
@@ -1614,6 +1839,9 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		ubi->avail_pebs -= ubi->beb_rsvd_pebs;
 		ubi->rsvd_pebs  += ubi->beb_rsvd_pebs;
 	}
+
+	if (consolidation_needed(ubi))
+		ubi_reschedule_work(ubi, &ubi->consolidation_work);
 
 	dbg_eba("EBA sub-system is initialized");
 	return 0;

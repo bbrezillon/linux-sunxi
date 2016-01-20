@@ -216,6 +216,40 @@ struct ubi_ltree_entry {
 	struct rw_semaphore mutex;
 };
 
+struct ubi_device;
+
+/**
+ * struct ubi_work - UBI work description data structure.
+ * @list: a link in the list of pending works
+ * @func: worker function
+ * @e: physical eraseblock to erase
+ * @vol_id: the volume ID on which this erasure is being performed
+ * @lnum: the logical eraseblock number
+ * @torture: if the physical eraseblock has to be tortured
+ * @anchor: produce a anchor PEB to by used by fastmap
+ *
+ * The @func pointer points to the worker function. If the @shutdown argument is
+ * not zero, the worker has to free the resources and exit immediately as the
+ * WL sub-system is shutting down.
+ * The worker has to return zero in case of success and a negative error code in
+ * case of failure.
+ */
+struct ubi_work {
+	struct list_head list;
+	int (*func)(struct ubi_device *ubi, struct ubi_work *wrk, int shutdown);
+	/* The below fields are only relevant to erasure works */
+	struct ubi_wl_entry *e;
+	int vol_id;
+	int lnum;
+	int torture;
+	int anchor;
+};
+
+struct ubi_full_leb {
+	struct list_head node;
+	struct ubi_leb_desc desc;
+};
+
 /**
  * struct ubi_rename_entry - volume re-name description data structure.
  * @new_name_len: new volume name length
@@ -581,7 +615,12 @@ struct ubi_device {
 	unsigned long long global_sqnum;
 	spinlock_t ltree_lock;
 	struct rb_root ltree;
-	int max_lebs_per_peb;
+	spinlock_t full_lock;
+	struct list_head full;
+	int full_count;
+	int consolidation_threshold;
+	struct ubi_work consolidation_work;
+	int lebs_per_consolidate_peb;
 	struct list_head consolidable;
 	struct ubi_leb_desc **consolidated;
 	struct mutex alc_mutex;
@@ -676,6 +715,7 @@ struct ubi_ainf_peb {
 	int lnum;
 	unsigned int scrub:1;
 	unsigned int copy_flag:1;
+	unsigned int full:1;
 	unsigned long long sqnum;
 	union {
 		struct rb_node rb;
@@ -770,33 +810,6 @@ struct ubi_attach_info {
 	struct kmem_cache *aeb_slab_cache;
 };
 
-/**
- * struct ubi_work - UBI work description data structure.
- * @list: a link in the list of pending works
- * @func: worker function
- * @e: physical eraseblock to erase
- * @vol_id: the volume ID on which this erasure is being performed
- * @lnum: the logical eraseblock number
- * @torture: if the physical eraseblock has to be tortured
- * @anchor: produce a anchor PEB to by used by fastmap
- *
- * The @func pointer points to the worker function. If the @shutdown argument is
- * not zero, the worker has to free the resources and exit immediately as the
- * WL sub-system is shutting down.
- * The worker has to return zero in case of success and a negative error code in
- * case of failure.
- */
-struct ubi_work {
-	struct list_head list;
-	int (*func)(struct ubi_device *ubi, struct ubi_work *wrk, int shutdown);
-	/* The below fields are only relevant to erasure works */
-	struct ubi_wl_entry *e;
-	int vol_id;
-	int lnum;
-	int torture;
-	int anchor;
-};
-
 #include "debug.h"
 
 extern struct kmem_cache *ubi_wl_entry_slab;
@@ -887,6 +900,8 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *used_e,
 int ubi_is_erase_work(struct ubi_work *wrk);
 void ubi_refill_pools(struct ubi_device *ubi);
 int ubi_ensure_anchor_pebs(struct ubi_device *ubi);
+void ubi_schedule_work(struct ubi_device *ubi, struct ubi_work *wrk);
+void ubi_reschedule_work(struct ubi_device *ubi, struct ubi_work *wrk);
 
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,

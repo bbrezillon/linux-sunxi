@@ -220,7 +220,7 @@ static int do_work(struct ubi_device *ubi)
 	}
 
 	wrk = list_entry(ubi->works.next, struct ubi_work, list);
-	list_del(&wrk->list);
+	list_del_init(&wrk->list);
 	ubi->works_count -= 1;
 	ubi_assert(ubi->works_count >= 0);
 	spin_unlock(&ubi->wl_lock);
@@ -542,11 +542,13 @@ repeat:
 static void __schedule_ubi_work(struct ubi_device *ubi, struct ubi_work *wrk)
 {
 	spin_lock(&ubi->wl_lock);
-	list_add_tail(&wrk->list, &ubi->works);
-	ubi_assert(ubi->works_count >= 0);
-	ubi->works_count += 1;
-	if (ubi->thread_enabled && !ubi_dbg_is_bgt_disabled(ubi))
-		wake_up_process(ubi->bgt_thread);
+	if (list_empty(&wrk->list)) {
+		list_add_tail(&wrk->list, &ubi->works);
+		ubi_assert(ubi->works_count >= 0);
+		ubi->works_count += 1;
+		if (ubi->thread_enabled && !ubi_dbg_is_bgt_disabled(ubi))
+			wake_up_process(ubi->bgt_thread);
+	}
 	spin_unlock(&ubi->wl_lock);
 }
 
@@ -563,6 +565,29 @@ static void schedule_ubi_work(struct ubi_device *ubi, struct ubi_work *wrk)
 	down_read(&ubi->work_sem);
 	__schedule_ubi_work(ubi, wrk);
 	up_read(&ubi->work_sem);
+}
+
+void ubi_schedule_work(struct ubi_device *ubi, struct ubi_work *wrk)
+{
+	schedule_ubi_work(ubi, wrk);
+}
+
+void ubi_reschedule_work(struct ubi_device *ubi, struct ubi_work *wrk)
+{
+	__schedule_ubi_work(ubi, wrk);
+}
+
+struct ubi_work *ubi_alloc_work(struct ubi_device *ubi)
+{
+	struct ubi_work *wrk;
+
+	wrk = kzalloc(sizeof(*wrk), GFP_NOFS);
+	if (!wrk)
+		return NULL;
+
+	INIT_LIST_HEAD(&wrk->list);
+
+	return wrk;
 }
 
 static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
@@ -589,7 +614,7 @@ static int schedule_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 	dbg_wl("schedule erasure of PEB %d, EC %d, torture %d",
 	       e->pnum, e->ec, torture);
 
-	wl_wrk = kmalloc(sizeof(struct ubi_work), GFP_NOFS);
+	wl_wrk = ubi_alloc_work(ubi);
 	if (!wl_wrk)
 		return -ENOMEM;
 
@@ -620,6 +645,7 @@ static int do_sync_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 
 	dbg_wl("sync erase of PEB %i", e->pnum);
 
+	INIT_LIST_HEAD(&wl_wrk.list);
 	wl_wrk.e = e;
 	wl_wrk.vol_id = vol_id;
 	wl_wrk.lnum = lnum;
@@ -988,7 +1014,7 @@ static int ensure_wear_leveling(struct ubi_device *ubi, int nested)
 	ubi->wl_scheduled = 1;
 	spin_unlock(&ubi->wl_lock);
 
-	wrk = kmalloc(sizeof(struct ubi_work), GFP_NOFS);
+	wrk = ubi_alloc_work(ubi);
 	if (!wrk) {
 		err = -ENOMEM;
 		goto out_cancel;
@@ -1346,7 +1372,7 @@ int ubi_wl_flush(struct ubi_device *ubi, int vol_id, int lnum)
 		list_for_each_entry_safe(wrk, tmp, &ubi->works, list) {
 			if ((vol_id == UBI_ALL || wrk->vol_id == vol_id) &&
 			    (lnum == UBI_ALL || wrk->lnum == lnum)) {
-				list_del(&wrk->list);
+				list_del_init(&wrk->list);
 				ubi->works_count -= 1;
 				ubi_assert(ubi->works_count >= 0);
 				spin_unlock(&ubi->wl_lock);
@@ -1478,7 +1504,7 @@ static void shutdown_work(struct ubi_device *ubi)
 		struct ubi_work *wrk;
 
 		wrk = list_entry(ubi->works.next, struct ubi_work, list);
-		list_del(&wrk->list);
+		list_del_init(&wrk->list);
 		wrk->func(ubi, wrk, 1);
 		ubi->works_count -= 1;
 		ubi_assert(ubi->works_count >= 0);
