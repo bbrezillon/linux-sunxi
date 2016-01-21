@@ -352,17 +352,17 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 		return ERR_PTR(-ENOTSUPP);
 
 	spin_lock(&ubi->full_lock);
-	if (ubi->full_count < ubi->lebs_per_consolidate_peb)
+	if (ubi->full_count < ubi->lebs_per_consolidated_peb)
 		err = -EAGAIN;
 	spin_unlock(&ubi->full_lock);
 	if (err)
 		return ERR_PTR(err);
 
-	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidate_peb, GFP_KERNEL);
+	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidated_peb, GFP_KERNEL);
 	if (!clebs)
 		return ERR_PTR(-ENOMEM);
 
-	for (i = 0; i < ubi->lebs_per_consolidate_peb;) {
+	for (i = 0; i < ubi->lebs_per_consolidated_peb;) {
 		bool retry = true;
 
 		spin_lock(&ubi->full_lock);
@@ -469,7 +469,7 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 	if (!clebs)
 		return true;
 
-	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
 		if (clebs[i].lnum == lnum && clebs[i].vol_id == vol_id) {
 		    clebs[i].lnum = -1;
 		    clebs[i].vol_id = -1;
@@ -550,7 +550,7 @@ out_unlock:
 int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		     void *buf, int offset, int len, int check)
 {
-	int err, pnum, scrub = 0, vol_id = vol->vol_id, loffs, i;
+	int err, pnum, scrub = 0, vol_id = vol->vol_id, loffs;
 	struct ubi_vid_hdr *vid_hdr;
 	uint32_t uninitialized_var(crc);
 	struct ubi_leb_desc *clebs;
@@ -584,13 +584,13 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (clebs) {
 		int lpos;
 
-		for (lpos = 0; lpos < ubi->lebs_per_consolidate_peb; lpos++) {
+		for (lpos = 0; lpos < ubi->lebs_per_consolidated_peb; lpos++) {
 			if (clebs[lpos].vol_id == vol->vol_id &&
 			    clebs[lpos].lnum == lnum)
 				break;
 		}
 
-		if (lpos == ubi->lebs_per_consolidate_peb)
+		if (lpos == ubi->lebs_per_consolidated_peb)
 			return -EINVAL;
 
 		loffs = ubi->leb_start + (lpos * ubi->leb_size);
@@ -1511,7 +1511,7 @@ static void consolidation_unlock(struct ubi_device *ubi,
 {
 	int i;
 
-	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++)
+	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
 		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
 }
 
@@ -1534,7 +1534,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset;
 
-	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 		int spnum = vol->eba_tbl[lnum];
@@ -1574,7 +1574,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		goto out_unlock_fm_eba;
 	}
 
-	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->lebs_per_consolidate_peb);
+	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->lebs_per_consolidated_peb);
 	if (err) {
 		ubi_warn(ubi, "failed to write VID headers to PEB %d",
 			 pnum);
@@ -1591,7 +1591,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	}
 
 	ubi->consolidated[pnum] = clebs;
-	for (i = 0; i < ubi->lebs_per_consolidate_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 
@@ -1603,7 +1603,7 @@ out_unlock_fm_eba:
 out:
 	mutex_unlock(&ubi->buf_mutex);
 	if (err) {
-		for (i = 0; i < ubi->lebs_per_consolidate_peb; i++)
+		for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
 			add_full_leb(ubi, clebs[i].vol_id, clebs[i].lnum);
 	}
 	consolidation_unlock(ubi, clebs);
@@ -1688,7 +1688,7 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 	int **scan_eba, **fm_eba;
 	struct ubi_ainf_volume *av;
 	struct ubi_volume *vol;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aeb;
 	struct rb_node *rb;
 
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
@@ -1729,15 +1729,15 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb)
-			scan_eba[i][aeb->lnum] = aeb->pnum;
+		ubi_rb_for_each_entry(rb, aeb, &av->root, rb)
+			scan_eba[i][aeb->desc.lnum] = aeb->peb->pnum;
 
 		av = ubi_find_av(ai_fastmap, idx2vol_id(ubi, i));
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb)
-			fm_eba[i][aeb->lnum] = aeb->pnum;
+		ubi_rb_for_each_entry(rb, aeb, &av->root, rb)
+			fm_eba[i][aeb->desc.lnum] = aeb->peb->pnum;
 
 		for (j = 0; j < vol->reserved_pebs; j++) {
 			if (scan_eba[i][j] != fm_eba[i][j]) {
@@ -1780,7 +1780,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	int i, j, err, num_volumes;
 	struct ubi_ainf_volume *av;
 	struct ubi_volume *vol;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aeb;
 	struct rb_node *rb;
 
 	dbg_eba("initialize EBA sub-system");
@@ -1794,7 +1794,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	ubi->full_count = 0;
 	ubi->consolidation_work.func = consolidation_worker;
 	INIT_LIST_HEAD(&ubi->consolidation_work.list);
-	ubi->consolidation_threshold = ubi->lebs_per_consolidate_peb;
+	ubi->consolidation_threshold = ubi->lebs_per_consolidated_peb;
 
 	ubi->global_sqnum = ai->max_sqnum + 1;
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
@@ -1820,17 +1820,19 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb) {
-			if (aeb->lnum >= vol->reserved_pebs) {
+		ubi_rb_for_each_entry(rb, aeb, &av->root, rb) {
+			if (aeb->desc.lnum >= vol->reserved_pebs) {
 				/*
 				 * This may happen in case of an unclean reboot
 				 * during re-size.
 				 */
-				ubi_move_aeb_to_list(av, aeb, &ai->erase);
+				if (--aeb->peb->refcount <= 0)
+					list_move_tail(&aeb->peb->list, &ai->erase);
 			} else {
-				vol->eba_tbl[aeb->lnum] = aeb->pnum;
+				vol->eba_tbl[aeb->desc.lnum] = aeb->peb->pnum;
 				if (aeb->full)
-					add_full_leb(ubi, vol->vol_id, aeb->lnum);
+					add_full_leb(ubi, vol->vol_id,
+						     aeb->desc.lnum);
 			}
 		}
 	}

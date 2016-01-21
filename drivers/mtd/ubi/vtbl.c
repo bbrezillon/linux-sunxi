@@ -333,12 +333,18 @@ retry:
 	if (err)
 		goto write_error;
 
+	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum,
+				ubi->leb_size - ubi->min_io_size,
+				ubi->min_io_size);
+	if (err)
+		goto write_error;
 	/*
 	 * And add it to the attaching information. Don't delete the old version
 	 * of this LEB as it will be deleted and freed in 'ubi_add_to_av()'.
 	 */
-	err = ubi_add_to_av(ubi, ai, new_aeb->pnum, new_aeb->ec, vid_hdr, 0);
-	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
+	list_add_tail(&new_aeb->list, &ai->used);
+	err = ubi_add_to_av(ubi, ai, new_aeb, vid_hdr, 0, 0, true);
+	kmem_cache_free(ai->apeb_slab_cache, new_aeb);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
 
@@ -348,10 +354,10 @@ write_error:
 		 * Probably this physical eraseblock went bad, try to pick
 		 * another one.
 		 */
-		list_add(&new_aeb->u.list, &ai->erase);
+		list_add(&new_aeb->list, &ai->erase);
 		goto retry;
 	}
-	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
+	kmem_cache_free(ai->apeb_slab_cache, new_aeb);
 out_free:
 	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
@@ -374,7 +380,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 {
 	int err;
 	struct rb_node *rb;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aeb;
 	struct ubi_vtbl_record *leb[UBI_LAYOUT_VOLUME_EBS] = { NULL, NULL };
 	int leb_corrupted[UBI_LAYOUT_VOLUME_EBS] = {1, 1};
 
@@ -406,15 +412,15 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 	dbg_gen("check layout volume");
 
 	/* Read both LEB 0 and LEB 1 into memory */
-	ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb) {
-		leb[aeb->lnum] = vzalloc(ubi->vtbl_size);
-		if (!leb[aeb->lnum]) {
+	ubi_rb_for_each_entry(rb, aeb, &av->root, rb) {
+		leb[aeb->desc.lnum] = vzalloc(ubi->vtbl_size);
+		if (!leb[aeb->desc.lnum]) {
 			err = -ENOMEM;
 			goto out_free;
 		}
 
-		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum, 0,
-				       ubi->vtbl_size);
+		err = ubi_io_read_data(ubi, leb[aeb->desc.lnum],
+				       aeb->peb->pnum, 0, ubi->vtbl_size);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an
@@ -426,7 +432,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 			 * aeb->scrub will be cleared in
 			 * 'ubi_add_to_av()'.
 			 */
-			aeb->scrub = 1;
+			aeb->peb->scrub = 1;
 		else if (err)
 			goto out_free;
 	}

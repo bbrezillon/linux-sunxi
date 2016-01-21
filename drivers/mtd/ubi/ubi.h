@@ -620,7 +620,7 @@ struct ubi_device {
 	int full_count;
 	int consolidation_threshold;
 	struct ubi_work consolidation_work;
-	int lebs_per_consolidate_peb;
+	int lebs_per_consolidated_peb;
 	struct list_head consolidable;
 	struct ubi_leb_desc **consolidated;
 	struct mutex alc_mutex;
@@ -709,18 +709,22 @@ struct ubi_device {
  * volume, the @vol_id and @lnum fields are initialized to %UBI_UNKNOWN.
  */
 struct ubi_ainf_peb {
+	struct list_head list;
 	int ec;
 	int pnum;
-	int vol_id;
-	int lnum;
+	int refcount;
 	unsigned int scrub:1;
+	unsigned int consolidated:1;
+};
+
+struct ubi_ainf_leb {
+	struct rb_node rb;
+	struct ubi_leb_desc desc;
+	unsigned long long sqnum;
 	unsigned int copy_flag:1;
 	unsigned int full:1;
-	unsigned long long sqnum;
-	union {
-		struct rb_node rb;
-		struct list_head list;
-	} u;
+	int peb_pos;
+	struct ubi_ainf_peb *peb;
 };
 
 /**
@@ -793,6 +797,7 @@ struct ubi_attach_info {
 	struct list_head free;
 	struct list_head erase;
 	struct list_head alien;
+	struct list_head used;
 	int corr_peb_count;
 	int empty_peb_count;
 	int alien_peb_count;
@@ -807,7 +812,8 @@ struct ubi_attach_info {
 	int mean_ec;
 	uint64_t ec_sum;
 	int ec_count;
-	struct kmem_cache *aeb_slab_cache;
+	struct kmem_cache *apeb_slab_cache;
+	struct kmem_cache *aleb_slab_cache;
 };
 
 #include "debug.h"
@@ -821,8 +827,9 @@ extern struct mutex ubi_devices_mutex;
 extern struct blocking_notifier_head ubi_notifiers;
 
 /* attach.c */
-int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai, int pnum,
-		  int ec, const struct ubi_vid_hdr *vid_hdr, int bitflips);
+int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
+		  struct ubi_ainf_peb *peb, const struct ubi_vid_hdr *vid_hdr,
+		  int peb_pos, int bitflips, bool full);
 struct ubi_ainf_volume *ubi_find_av(const struct ubi_attach_info *ai,
 				    int vol_id);
 void ubi_remove_av(struct ubi_attach_info *ai, struct ubi_ainf_volume *av);
@@ -949,8 +956,8 @@ void ubi_do_get_device_info(struct ubi_device *ubi, struct ubi_device_info *di);
 void ubi_do_get_volume_info(struct ubi_device *ubi, struct ubi_volume *vol,
 			    struct ubi_volume_info *vi);
 /* scan.c */
-int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_peb *aeb,
-		      int pnum, const struct ubi_vid_hdr *vid_hdr);
+int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_leb *aeb,
+		     int pnum, const struct ubi_vid_hdr *vid_hdr);
 
 /* fastmap.c */
 #ifdef CONFIG_MTD_UBI_FASTMAP
@@ -1032,20 +1039,20 @@ static inline int ubiblock_remove(struct ubi_volume_info *vi)
 	     rb = rb_next(rb),                                               \
 	     pos = (rb ? container_of(rb, typeof(*pos), member) : NULL))
 
-/*
- * ubi_move_aeb_to_list - move a PEB from the volume tree to a list.
- *
- * @av: volume attaching information
- * @aeb: attaching eraseblock information
- * @list: the list to move to
- */
-static inline void ubi_move_aeb_to_list(struct ubi_ainf_volume *av,
-					 struct ubi_ainf_peb *aeb,
-					 struct list_head *list)
-{
-		rb_erase(&aeb->u.rb, &av->root);
-		list_add_tail(&aeb->u.list, list);
-}
+///*
+// * ubi_move_aeb_to_list - move a PEB from the volume tree to a list.
+// *
+// * @av: volume attaching information
+// * @aeb: attaching eraseblock information
+// * @list: the list to move to
+// */
+//static inline void ubi_move_aeb_to_list(struct ubi_ainf_volume *av,
+//					 struct ubi_ainf_peb *aeb,
+//					 struct list_head *list)
+//{
+//		rb_erase(&aeb->u.rb, &av->root);
+//		list_add_tail(&aeb->u.list, list);
+//}
 
 /**
  * ubi_zalloc_vid_hdr - allocate a volume identifier header object.
