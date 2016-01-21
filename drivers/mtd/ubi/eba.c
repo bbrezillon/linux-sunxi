@@ -425,7 +425,7 @@ static bool consolidation_needed(struct ubi_device *ubi)
 	bool ret;
 
 	spin_lock(&ubi->full_lock);
-	ret = ubi->consolidation_threshold <= ubi->full_count;
+	ret = ubi->full_count >= ubi->consolidation_threshold;
 	spin_unlock(&ubi->full_lock);
 
 	return ret;
@@ -550,9 +550,10 @@ out_unlock:
 int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		     void *buf, int offset, int len, int check)
 {
-	int err, pnum, scrub = 0, vol_id = vol->vol_id;
+	int err, pnum, scrub = 0, vol_id = vol->vol_id, loffs, i;
 	struct ubi_vid_hdr *vid_hdr;
 	uint32_t uninitialized_var(crc);
+	struct ubi_leb_desc *clebs;
 
 	err = leb_read_lock(ubi, vol_id, lnum);
 	if (err)
@@ -578,6 +579,22 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 
 	if (vol->vol_type == UBI_DYNAMIC_VOLUME)
 		check = 0;
+
+	clebs = ubi_eba_get_consolidated(ubi, pnum);
+	if (clebs) {
+		int lpos;
+
+		for (lpos = 0; lpos < ubi->lebs_per_consolidate_peb; lpos++) {
+			if (clebs[lpos].vol_id == vol->vol_id &&
+			    clebs[lpos].lnum == lnum)
+				break;
+		}
+
+		if (lpos == ubi->lebs_per_consolidate_peb)
+			return -EINVAL;
+
+		loffs = ubi->leb_start + (lpos * ubi->leb_size);
+	}
 
 retry:
 	if (check) {
@@ -619,7 +636,11 @@ retry:
 		ubi_free_vid_hdr(ubi, vid_hdr);
 	}
 
-	err = ubi_io_read_data(ubi, buf, pnum, offset, len);
+	if (!clebs)
+		err = ubi_io_read_data(ubi, buf, pnum, offset, len);
+	else
+		err = ubi_io_raw_read(ubi, buf, pnum, offset + loffs, len);
+
 	if (err) {
 		if (err == UBI_IO_BITFLIPS)
 			scrub = 1;
