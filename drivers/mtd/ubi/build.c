@@ -645,7 +645,10 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 	 * physical eraseblocks maximum.
 	 */
 
-	ubi->peb_size   = ubi->mtd->erasesize;
+	ubi->consolidated_peb_size = ubi->mtd->erasesize;
+	ubi->peb_size   = ubi->consolidated_peb_size /
+			  mtd_pairing_groups_per_eb(ubi->mtd);
+	ubi->lebs_per_consolidated_peb = mtd_pairing_groups_per_eb(ubi->mtd);
 	ubi->peb_count  = mtd_div_by_eb(ubi->mtd->size, ubi->mtd);
 	ubi->flash_size = ubi->mtd->size;
 
@@ -710,6 +713,10 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 		ubi->vid_hdr_shift = ubi->vid_hdr_offset -
 						ubi->vid_hdr_aloffset;
 	}
+
+	ubi->ec_rd_hdr_alsize = ALIGN(UBI_EC_HDR_SIZE, ubi->mtd->readsize);
+	ubi->vid_rd_hdr_alsize = ALIGN(UBI_VID_HDR_SIZE + ubi->vid_hdr_shift,
+				       ubi->mtd->readsize);
 
 	/* Similar for the data offset */
 	ubi->leb_start = ubi->vid_hdr_offset + UBI_VID_HDR_SIZE;
@@ -789,7 +796,7 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
 {
 	struct ubi_volume_desc desc;
 	struct ubi_volume *vol = ubi->volumes[vol_id];
-	int err, old_reserved_pebs = vol->reserved_pebs;
+	int err, old_reserved_lebs = vol->reserved_lebs;
 
 	if (ubi->ro_mode) {
 		ubi_warn(ubi, "skip auto-resize because of R/O mode");
@@ -816,9 +823,11 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
 			ubi_err(ubi, "cannot clean auto-resize flag for volume %d",
 				vol_id);
 	} else {
+		int avail_lebs = ubi->avail_pebs *
+				 ubi->lebs_per_consolidated_peb;
+
 		desc.vol = vol;
-		err = ubi_resize_volume(&desc,
-					old_reserved_pebs + ubi->avail_pebs);
+		err = ubi_resize_volume(&desc, old_reserved_lebs + avail_lebs);
 		if (err)
 			ubi_err(ubi, "cannot auto-resize volume %d",
 				vol_id);
@@ -828,7 +837,7 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
 		return err;
 
 	ubi_msg(ubi, "volume %d (\"%s\") re-sized from %d to %d LEBs",
-		vol_id, vol->name, old_reserved_pebs, vol->reserved_pebs);
+		vol_id, vol->name, old_reserved_lebs, vol->reserved_lebs);
 	return 0;
 }
 
@@ -964,7 +973,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 		goto out_free;
 
 	err = -ENOMEM;
-	ubi->peb_buf = vmalloc(ubi->peb_size);
+	ubi->peb_buf = vmalloc(ubi->consolidated_peb_size);
 	if (!ubi->peb_buf)
 		goto out_free;
 

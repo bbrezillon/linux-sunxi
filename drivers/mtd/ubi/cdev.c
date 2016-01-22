@@ -415,7 +415,7 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 			break;
 		}
 
-		rsvd_bytes = (long long)vol->reserved_pebs *
+		rsvd_bytes = (long long)vol->reserved_lebs *
 					ubi->leb_size-vol->data_pad;
 		if (bytes < 0 || bytes > rsvd_bytes) {
 			err = -EINVAL;
@@ -454,7 +454,7 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 
 		/* Validate the request */
 		err = -EINVAL;
-		if (req.lnum < 0 || req.lnum >= vol->reserved_pebs ||
+		if (req.lnum < 0 || req.lnum >= vol->reserved_lebs ||
 		    req.bytes < 0 || req.bytes > vol->usable_leb_size)
 			break;
 
@@ -485,7 +485,7 @@ static long vol_cdev_ioctl(struct file *file, unsigned int cmd,
 			break;
 		}
 
-		if (lnum < 0 || lnum >= vol->reserved_pebs) {
+		if (lnum < 0 || lnum >= vol->reserved_lebs) {
 			err = -EINVAL;
 			break;
 		}
@@ -909,7 +909,7 @@ static long ubi_cdev_ioctl(struct file *file, unsigned int cmd,
 	/* Re-size volume command */
 	case UBI_IOCRSVOL:
 	{
-		int pebs;
+		int lebs;
 		struct ubi_rsvol_req req;
 
 		dbg_gen("re-size volume");
@@ -929,11 +929,11 @@ static long ubi_cdev_ioctl(struct file *file, unsigned int cmd,
 			break;
 		}
 
-		pebs = div_u64(req.bytes + desc->vol->usable_leb_size - 1,
+		lebs = div_u64(req.bytes + desc->vol->usable_leb_size - 1,
 			       desc->vol->usable_leb_size);
 
 		mutex_lock(&ubi->device_mutex);
-		err = ubi_resize_volume(desc, pebs);
+		err = ubi_resize_volume(desc, lebs);
 		mutex_unlock(&ubi->device_mutex);
 		ubi_close_volume(desc);
 		break;
