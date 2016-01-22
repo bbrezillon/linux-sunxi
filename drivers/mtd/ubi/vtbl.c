@@ -178,7 +178,7 @@ static int vtbl_check(const struct ubi_device *ubi,
 	for (i = 0; i < ubi->vtbl_slots; i++) {
 		cond_resched();
 
-		reserved_pebs = be32_to_cpu(vtbl[i].reserved_pebs);
+		reserved_pebs = be32_to_cpu(vtbl[i].reserved_lebs);
 		alignment = be32_to_cpu(vtbl[i].alignment);
 		data_pad = be32_to_cpu(vtbl[i].data_pad);
 		upd_marker = vtbl[i].upd_marker;
@@ -333,12 +333,18 @@ retry:
 	if (err)
 		goto write_error;
 
+	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum,
+				ubi->leb_size - ubi->min_io_size,
+				ubi->min_io_size);
+	if (err)
+		goto write_error;
 	/*
 	 * And add it to the attaching information. Don't delete the old version
 	 * of this LEB as it will be deleted and freed in 'ubi_add_to_av()'.
 	 */
-	err = ubi_add_to_av(ubi, ai, new_aeb->pnum, new_aeb->ec, vid_hdr, 0);
-	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
+	list_add_tail(&new_aeb->list, &ai->used);
+	err = ubi_add_to_av(ubi, ai, new_aeb, vid_hdr, 0, 0, true);
+	kmem_cache_free(ai->apeb_slab_cache, new_aeb);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
 
@@ -348,10 +354,10 @@ write_error:
 		 * Probably this physical eraseblock went bad, try to pick
 		 * another one.
 		 */
-		list_add(&new_aeb->u.list, &ai->erase);
+		list_add(&new_aeb->list, &ai->erase);
 		goto retry;
 	}
-	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
+	kmem_cache_free(ai->apeb_slab_cache, new_aeb);
 out_free:
 	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
@@ -374,7 +380,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 {
 	int err;
 	struct rb_node *rb;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aeb;
 	struct ubi_vtbl_record *leb[UBI_LAYOUT_VOLUME_EBS] = { NULL, NULL };
 	int leb_corrupted[UBI_LAYOUT_VOLUME_EBS] = {1, 1};
 
@@ -406,15 +412,15 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 	dbg_gen("check layout volume");
 
 	/* Read both LEB 0 and LEB 1 into memory */
-	ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb) {
-		leb[aeb->lnum] = vzalloc(ubi->vtbl_size);
-		if (!leb[aeb->lnum]) {
+	ubi_rb_for_each_entry(rb, aeb, &av->root, rb) {
+		leb[aeb->desc.lnum] = vzalloc(ubi->vtbl_size);
+		if (!leb[aeb->desc.lnum]) {
 			err = -ENOMEM;
 			goto out_free;
 		}
 
-		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum, 0,
-				       ubi->vtbl_size);
+		err = ubi_io_read_data(ubi, leb[aeb->desc.lnum],
+				       aeb->peb->pnum, 0, ubi->vtbl_size);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an
@@ -426,7 +432,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 			 * aeb->scrub will be cleared in
 			 * 'ubi_add_to_av()'.
 			 */
-			aeb->scrub = 1;
+			aeb->peb->scrub = 1;
 		else if (err)
 			goto out_free;
 	}
@@ -538,14 +544,14 @@ static int init_volumes(struct ubi_device *ubi,
 	for (i = 0; i < ubi->vtbl_slots; i++) {
 		cond_resched();
 
-		if (be32_to_cpu(vtbl[i].reserved_pebs) == 0)
+		if (be32_to_cpu(vtbl[i].reserved_lebs) == 0)
 			continue; /* Empty record */
 
 		vol = kzalloc(sizeof(struct ubi_volume), GFP_KERNEL);
 		if (!vol)
 			return -ENOMEM;
 
-		vol->reserved_pebs = be32_to_cpu(vtbl[i].reserved_pebs);
+		vol->reserved_lebs = be32_to_cpu(vtbl[i].reserved_lebs);
 		vol->alignment = be32_to_cpu(vtbl[i].alignment);
 		vol->data_pad = be32_to_cpu(vtbl[i].data_pad);
 		vol->upd_marker = vtbl[i].upd_marker;
@@ -573,14 +579,14 @@ static int init_volumes(struct ubi_device *ubi,
 		ubi->volumes[i] = vol;
 		ubi->vol_count += 1;
 		vol->ubi = ubi;
-		reserved_pebs += vol->reserved_pebs;
+		reserved_pebs += vol->reserved_lebs;
 
 		/*
 		 * In case of dynamic volume UBI knows nothing about how many
 		 * data is stored there. So assume the whole volume is used.
 		 */
 		if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
-			vol->used_ebs = vol->reserved_pebs;
+			vol->used_ebs = vol->reserved_lebs;
 			vol->last_eb_bytes = vol->usable_leb_size;
 			vol->used_bytes =
 				(long long)vol->used_ebs * vol->usable_leb_size;
@@ -624,14 +630,14 @@ static int init_volumes(struct ubi_device *ubi,
 	if (!vol)
 		return -ENOMEM;
 
-	vol->reserved_pebs = UBI_LAYOUT_VOLUME_EBS;
+	vol->reserved_lebs = UBI_LAYOUT_VOLUME_EBS;
 	vol->alignment = UBI_LAYOUT_VOLUME_ALIGN;
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
 	memcpy(vol->name, UBI_LAYOUT_VOLUME_NAME, vol->name_len + 1);
 	vol->usable_leb_size = ubi->leb_size;
-	vol->used_ebs = vol->reserved_pebs;
-	vol->last_eb_bytes = vol->reserved_pebs;
+	vol->used_ebs = vol->reserved_lebs;
+	vol->last_eb_bytes = vol->reserved_lebs;
 	vol->used_bytes =
 		(long long)vol->used_ebs * (ubi->leb_size - vol->data_pad);
 	vol->vol_id = UBI_LAYOUT_VOLUME_ID;
@@ -639,7 +645,7 @@ static int init_volumes(struct ubi_device *ubi,
 
 	ubi_assert(!ubi->volumes[i]);
 	ubi->volumes[vol_id2idx(ubi, vol->vol_id)] = vol;
-	reserved_pebs += vol->reserved_pebs;
+	reserved_pebs += vol->reserved_lebs;
 	ubi->vol_count += 1;
 	vol->ubi = ubi;
 
@@ -670,11 +676,11 @@ static int check_av(const struct ubi_volume *vol,
 {
 	int err;
 
-	if (av->highest_lnum >= vol->reserved_pebs) {
+	if (av->highest_lnum >= vol->reserved_lebs) {
 		err = 1;
 		goto bad;
 	}
-	if (av->leb_count > vol->reserved_pebs) {
+	if (av->leb_count > vol->reserved_lebs) {
 		err = 2;
 		goto bad;
 	}
@@ -682,7 +688,7 @@ static int check_av(const struct ubi_volume *vol,
 		err = 3;
 		goto bad;
 	}
-	if (av->used_ebs > vol->reserved_pebs) {
+	if (av->used_ebs > vol->reserved_lebs) {
 		err = 4;
 		goto bad;
 	}
@@ -740,7 +746,7 @@ static int check_attaching_info(const struct ubi_device *ubi,
 			continue;
 		}
 
-		if (vol->reserved_pebs == 0) {
+		if (vol->reserved_lebs == 0) {
 			ubi_assert(i < ubi->vtbl_slots);
 
 			if (!av)
