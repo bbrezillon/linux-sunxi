@@ -121,7 +121,7 @@ static int ubi_io_mtd_read(const struct ubi_device *ubi, void *buf, int pnum,
 			   int offset, int len, size_t *read, bool raw)
 {
 	loff_t addr = (loff_t)pnum * ubi->consolidated_peb_size;
-	int wunitoffs, chunklen, err = 0;
+	int wunitoffs, chunklen, err = 0, end = offset + len;
 	struct nand_pairing_info info;
 
 	/*
@@ -132,15 +132,16 @@ static int ubi_io_mtd_read(const struct ubi_device *ubi, void *buf, int pnum,
 		return mtd_read(ubi->mtd, addr + offset, len, read, buf);
 
 	wunitoffs = offset % ubi->mtd->writesize;
-	chunklen = ubi->mtd->writesize - wunitoffs;
 	info.pair = offset / ubi->mtd->writesize;
 	info.group = 0;
 	*read = 0;
 
-	while (offset < len) {
+	while (offset < end) {
 		int realoffs;
 		size_t chunkread = 0;
 
+		chunklen = min_t(int, ubi->mtd->writesize - wunitoffs,
+				 end - offset);
 		realoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
 		realoffs *= ubi->mtd->writesize;
 		realoffs += wunitoffs;
@@ -151,12 +152,11 @@ static int ubi_io_mtd_read(const struct ubi_device *ubi, void *buf, int pnum,
 			return err;
 
 		offset += chunklen;
+		buf += chunklen;
 		info.pair++;
 
-		if (wunitoffs) {
+		if (wunitoffs)
 			wunitoffs = 0;
-			chunklen = ubi->mtd->writesize;
-		}
 	}
 
 	return err;
@@ -291,25 +291,24 @@ int ubi_io_mtd_write(struct ubi_device *ubi, const void *buf, int pnum, int offs
 		     int len, size_t *written, bool raw)
 {
 	loff_t addr = (loff_t)pnum * ubi->consolidated_peb_size;
-	int wunitoffs, chunklen, err = 0;
+	int chunklen, err = 0, end = offset + len;
 	struct nand_pairing_info info;
 
 	if (raw || mtd_pairing_groups_per_eb(ubi->mtd) == 1)
 		return mtd_write(ubi->mtd, addr + offset, len, written, buf);
 
-	wunitoffs = offset % ubi->mtd->writesize;
-	chunklen = ubi->mtd->writesize - wunitoffs;
 	info.pair = offset / ubi->mtd->writesize;
 	info.group = 0;
 	*written = 0;
 
-	while (offset < len) {
+	while (offset < end) {
 		int realoffs;
 		size_t chunkwritten = 0;
 
+		chunklen = min_t(int, ubi->mtd->writesize,
+				 end - offset);
 		realoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
 		realoffs *= ubi->mtd->writesize;
-		realoffs += wunitoffs;
 		err = mtd_write(ubi->mtd, addr + realoffs, chunklen,
 				&chunkwritten, buf);
 		*written += chunkwritten;
@@ -317,12 +316,8 @@ int ubi_io_mtd_write(struct ubi_device *ubi, const void *buf, int pnum, int offs
 			return err;
 
 		offset += chunklen;
+		buf += chunklen;
 		info.pair++;
-
-		if (wunitoffs) {
-			wunitoffs = 0;
-			chunklen = ubi->mtd->writesize;
-		}
 	}
 
 	return err;
@@ -415,8 +410,10 @@ static int __ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum,
 			err, len, pnum, offset, written);
 		dump_stack();
 		ubi_dump_flash(ubi, pnum, offset, len);
-	} else
+	} else {
+		pr_info("%s:%i written = %d len = %d\n", __func__, __LINE__, written, len);
 		ubi_assert(written == len);
+	}
 
 	if (!err) {
 		err = self_check_write(ubi, buf, pnum, offset, len);
@@ -1181,6 +1178,9 @@ int ubi_io_read_vid_hdrs(struct ubi_device *ubi, int pnum,
 
 		magic = be32_to_cpu(vid_hdr->magic);
 		if (magic != UBI_VID_HDR_MAGIC) {
+			if (i && !magic)
+				break;
+
 			if (mtd_is_eccerr(read_err)) {
 				err = UBI_IO_BAD_HDR_EBADMSG;
 				break;
