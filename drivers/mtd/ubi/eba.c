@@ -475,9 +475,12 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 		    clebs[i].vol_id = -1;
 		}
 
-		if (clebs[i].lnum >= 0 && clebs[i].vol_id)
+		if (clebs[i].lnum >= 0 && clebs[i].vol_id >= 0)
 			return false;
 	}
+
+	ubi->consolidated[pnum] = NULL;
+	kfree(clebs);
 
 	return true;
 }
@@ -1523,7 +1526,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 	ubi_assert(ubi->consolidated);
 
-	if (consolidation_needed(ubi))
+	if (!consolidation_needed(ubi))
 		return 0;
 
 	clebs = find_consolidable_lebs(ubi);
@@ -1532,7 +1535,8 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 	mutex_lock(&ubi->buf_mutex);
 
-	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset;
+	memset(ubi->peb_buf + ubi->vid_hdr_aloffset, 0, ubi->vid_hdr_alsize);
+	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset + ubi->vid_hdr_shift;
 
 	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
@@ -1553,7 +1557,12 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		vid_hdrs[i].compat = ubi_get_compat(ubi, vol_id);
 		vid_hdrs[i].data_pad = cpu_to_be32(vol->data_pad);
 		crc = crc32(UBI_CRC32_INIT, buf, ubi->leb_size);
-		vid_hdrs[i].vol_type = vol->vol_type;
+		if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
+			vid_hdrs[i].vol_type = UBI_VID_DYNAMIC;
+		} else {
+			vid_hdrs[i].vol_type = UBI_VID_STATIC;
+			vid_hdrs[i].used_ebs = cpu_to_be32(vol->used_ebs);
+		}
 		vid_hdrs[i].data_size = cpu_to_be32(ubi->leb_size);
 		vid_hdrs[i].copy_flag = 1;
 		vid_hdrs[i].data_crc = cpu_to_be32(crc);
@@ -1864,7 +1873,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	}
 
 	if (consolidation_needed(ubi))
-		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+		ubi_schedule_work(ubi, &ubi->consolidation_work);
 
 	dbg_eba("EBA sub-system is initialized");
 	return 0;

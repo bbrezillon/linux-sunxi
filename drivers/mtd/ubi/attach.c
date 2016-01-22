@@ -1065,6 +1065,8 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 	aeb->consolidated = nvidh > 1;
 	aeb->refcount = nvidh;
+	aeb->pnum = pnum;
+	aeb->ec = ec;
 	list_add_tail(&aeb->list, &ai->used);
 
 	for (i = 0; i < nvidh; i++) {
@@ -1344,6 +1346,7 @@ static struct ubi_attach_info *alloc_ai(void)
 	INIT_LIST_HEAD(&ai->free);
 	INIT_LIST_HEAD(&ai->erase);
 	INIT_LIST_HEAD(&ai->alien);
+	INIT_LIST_HEAD(&ai->used);
 	ai->volumes = RB_ROOT;
 	ai->apeb_slab_cache = kmem_cache_create("ubi_apeb_slab_cache",
 					       sizeof(struct ubi_ainf_peb),

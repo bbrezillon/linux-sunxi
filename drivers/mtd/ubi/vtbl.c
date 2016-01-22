@@ -344,7 +344,6 @@ retry:
 	 */
 	list_add_tail(&new_aeb->list, &ai->used);
 	err = ubi_add_to_av(ubi, ai, new_aeb, vid_hdr, 0, 0, true);
-	kmem_cache_free(ai->apeb_slab_cache, new_aeb);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
 

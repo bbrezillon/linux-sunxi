@@ -410,10 +410,8 @@ static int __ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum,
 			err, len, pnum, offset, written);
 		dump_stack();
 		ubi_dump_flash(ubi, pnum, offset, len);
-	} else {
-		pr_info("%s:%i written = %d len = %d\n", __func__, __LINE__, written, len);
+	} else
 		ubi_assert(written == len);
-	}
 
 	if (!err) {
 		err = self_check_write(ubi, buf, pnum, offset, len);
