@@ -4106,13 +4106,19 @@ static int nand_pairing_dist3_get_wunit(struct mtd_info *mtd,
 	int page = info->pair * 2;
 	int dist = 3;
 
+	if (!info->group && !info->pair)
+		return 0;
+
 	if (info->pair == lastpair && info->group)
 		dist = 2;
 
 	if (!info->group)
 		page--;
-	else
+	else if (info->pair)
 		page += dist - 1;
+
+	if (page >= mtd->erasesize / mtd->writesize)
+		return -EINVAL;
 
 	return page;
 }
@@ -4149,6 +4155,9 @@ static int nand_pairing_dist6_get_wunit(struct mtd_info *mtd,
 	int lastpair = ((mtd->erasesize / mtd->writesize) - 1) / 2;
 	int page = info->pair * 2;
 	int dist = 6;
+
+	if (!info->group && !info->pair)
+		return 0;
 
 	if (info->pair >= lastpair - 1 && info->group)
 		dist = 4;
