@@ -86,7 +86,7 @@ static ssize_t vol_attribute_show(struct device *dev,
 	spin_unlock(&ubi->volumes_lock);
 
 	if (attr == &attr_vol_reserved_ebs)
-		ret = sprintf(buf, "%d\n", vol->reserved_pebs);
+		ret = sprintf(buf, "%d\n", vol->reserved_lebs);
 	else if (attr == &attr_vol_type) {
 		const char *tp;
 
@@ -158,6 +158,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	int i, err, vol_id = req->vol_id, do_free = 1;
 	struct ubi_volume *vol;
 	struct ubi_vtbl_record vtbl_rec;
+	int rsvd_pebs = 0;
 	dev_t dev;
 
 	if (ubi->ro_mode)
@@ -208,11 +209,13 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 
 	/* Calculate how many eraseblocks are requested */
 	vol->usable_leb_size = ubi->leb_size - ubi->leb_size % req->alignment;
-	vol->reserved_pebs = div_u64(req->bytes + vol->usable_leb_size - 1,
+	vol->reserved_lebs = div_u64(req->bytes + vol->usable_leb_size - 1,
 				     vol->usable_leb_size);
 
 	/* Reserve physical eraseblocks */
-	if (vol->reserved_pebs > ubi->avail_pebs) {
+	rsvd_pebs = DIV_ROUND_UP(vol->reserved_lebs,
+				 ubi->lebs_per_consolidated_peb);
+	if (rsvd_pebs > ubi->avail_pebs) {
 		ubi_err(ubi, "not enough PEBs, only %d available",
 			ubi->avail_pebs);
 		if (ubi->corr_peb_count)
@@ -221,8 +224,8 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 		err = -ENOSPC;
 		goto out_unlock;
 	}
-	ubi->avail_pebs -= vol->reserved_pebs;
-	ubi->rsvd_pebs += vol->reserved_pebs;
+	ubi->avail_pebs -= rsvd_pebs;
+	ubi->rsvd_pebs += rsvd_pebs;
 	spin_unlock(&ubi->volumes_lock);
 
 	vol->vol_id    = vol_id;
@@ -241,17 +244,31 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	if (err)
 		goto out_acc;
 
-	vol->eba_tbl = kmalloc(vol->reserved_pebs * sizeof(int), GFP_KERNEL);
+	vol->eba_tbl = kmalloc(vol->reserved_lebs * sizeof(int), GFP_KERNEL);
 	if (!vol->eba_tbl) {
 		err = -ENOMEM;
 		goto out_acc;
 	}
 
-	for (i = 0; i < vol->reserved_pebs; i++)
+#ifdef CONFIG_UBI_EXTENDED_PEB
+	/*
+	 * TODO: check in the underlying MTD device has a page pairing scheme
+	 * requiring the consolidated bitmap creation.
+	 */
+	vol->consolidated = kzalloc(DIV_ROUND_UP(vol->reserved_lebs,
+						 BITS_PER_LONG),
+				    GFP_KERNEL);
+	if (!vol->consolidated) {
+		err = -ENOMEM;
+		goto out_mapping;
+	}
+#endif
+
+	for (i = 0; i < vol->reserved_lebs; i++)
 		vol->eba_tbl[i] = UBI_LEB_UNMAPPED;
 
 	if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
-		vol->used_ebs = vol->reserved_pebs;
+		vol->used_ebs = vol->reserved_lebs;
 		vol->last_eb_bytes = vol->usable_leb_size;
 		vol->used_bytes =
 			(long long)vol->used_ebs * vol->usable_leb_size;
@@ -290,7 +307,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 
 	/* Fill volume table record */
 	memset(&vtbl_rec, 0, sizeof(struct ubi_vtbl_record));
-	vtbl_rec.reserved_pebs = cpu_to_be32(vol->reserved_pebs);
+	vtbl_rec.reserved_lebs = cpu_to_be32(vol->reserved_lebs);
 	vtbl_rec.alignment     = cpu_to_be32(vol->alignment);
 	vtbl_rec.data_pad      = cpu_to_be32(vol->data_pad);
 	vtbl_rec.name_len      = cpu_to_be16(vol->name_len);
@@ -328,12 +345,16 @@ out_sysfs:
 out_cdev:
 	cdev_del(&vol->cdev);
 out_mapping:
-	if (do_free)
+	if (do_free) {
 		kfree(vol->eba_tbl);
+#ifdef CONFIG_UBI_EXTENDED_PEB
+		kfree(vol->consolidated);
+#endif
+	}
 out_acc:
 	spin_lock(&ubi->volumes_lock);
-	ubi->rsvd_pebs -= vol->reserved_pebs;
-	ubi->avail_pebs += vol->reserved_pebs;
+	ubi->rsvd_pebs -= rsvd_pebs;
+	ubi->avail_pebs += rsvd_pebs;
 out_unlock:
 	spin_unlock(&ubi->volumes_lock);
 	if (do_free)
@@ -358,7 +379,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 {
 	struct ubi_volume *vol = desc->vol;
 	struct ubi_device *ubi = vol->ubi;
-	int i, err, vol_id = vol->vol_id, reserved_pebs = vol->reserved_pebs;
+	int i, err, vol_id = vol->vol_id, reserved_pebs;
 
 	dbg_gen("remove device %d, volume %d", ubi->ubi_num, vol_id);
 	ubi_assert(desc->mode == UBI_EXCLUSIVE);
@@ -385,7 +406,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 			goto out_err;
 	}
 
-	for (i = 0; i < vol->reserved_pebs; i++) {
+	for (i = 0; i < vol->reserved_lebs; i++) {
 		err = ubi_eba_unmap_leb(ubi, vol, i);
 		if (err)
 			goto out_err;
@@ -394,6 +415,8 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 	cdev_del(&vol->cdev);
 	device_unregister(&vol->dev);
 
+	reserved_pebs = DIV_ROUND_UP(vol->reserved_lebs,
+				     ubi->lebs_per_consolidated_peb);
 	spin_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= reserved_pebs;
 	ubi->avail_pebs += reserved_pebs;
@@ -425,9 +448,9 @@ out_unlock:
  * negative error code in case of failure. The caller has to have the
  * @ubi->device_mutex locked.
  */
-int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
+int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_lebs)
 {
-	int i, err, pebs, *new_mapping;
+	int i, err, lebs, pebs, *new_mapping;
 	struct ubi_volume *vol = desc->vol;
 	struct ubi_device *ubi = vol->ubi;
 	struct ubi_vtbl_record vtbl_rec;
@@ -437,24 +460,24 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		return -EROFS;
 
 	dbg_gen("re-size device %d, volume %d to from %d to %d PEBs",
-		ubi->ubi_num, vol_id, vol->reserved_pebs, reserved_pebs);
+		ubi->ubi_num, vol_id, vol->reserved_lebs, reserved_lebs);
 
 	if (vol->vol_type == UBI_STATIC_VOLUME &&
-	    reserved_pebs < vol->used_ebs) {
+	    reserved_lebs < vol->used_ebs) {
 		ubi_err(ubi, "too small size %d, %d LEBs contain data",
-			reserved_pebs, vol->used_ebs);
+			reserved_lebs, vol->used_ebs);
 		return -EINVAL;
 	}
 
 	/* If the size is the same, we have nothing to do */
-	if (reserved_pebs == vol->reserved_pebs)
+	if (reserved_lebs == vol->reserved_lebs)
 		return 0;
 
-	new_mapping = kmalloc(reserved_pebs * sizeof(int), GFP_KERNEL);
+	new_mapping = kmalloc(reserved_lebs * sizeof(int), GFP_KERNEL);
 	if (!new_mapping)
 		return -ENOMEM;
 
-	for (i = 0; i < reserved_pebs; i++)
+	for (i = 0; i < reserved_lebs; i++)
 		new_mapping[i] = UBI_LEB_UNMAPPED;
 
 	spin_lock(&ubi->volumes_lock);
@@ -466,8 +489,12 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	spin_unlock(&ubi->volumes_lock);
 
 	/* Reserve physical eraseblocks */
-	pebs = reserved_pebs - vol->reserved_pebs;
-	if (pebs > 0) {
+	lebs = reserved_lebs - vol->reserved_lebs;
+	pebs = DIV_ROUND_UP(reserved_lebs,
+			    ubi->lebs_per_consolidated_peb) -
+	       DIV_ROUND_UP(vol->reserved_lebs,
+			    ubi->lebs_per_consolidated_peb);
+	if (lebs > 0) {
 		spin_lock(&ubi->volumes_lock);
 		if (pebs > ubi->avail_pebs) {
 			ubi_err(ubi, "not enough PEBs: requested %d, available %d",
@@ -481,7 +508,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		}
 		ubi->avail_pebs -= pebs;
 		ubi->rsvd_pebs += pebs;
-		for (i = 0; i < vol->reserved_pebs; i++)
+		for (i = 0; i < vol->reserved_lebs; i++)
 			new_mapping[i] = vol->eba_tbl[i];
 		kfree(vol->eba_tbl);
 		vol->eba_tbl = new_mapping;
@@ -490,31 +517,32 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 
 	/* Change volume table record */
 	vtbl_rec = ubi->vtbl[vol_id];
-	vtbl_rec.reserved_pebs = cpu_to_be32(reserved_pebs);
+	vtbl_rec.reserved_lebs = cpu_to_be32(reserved_lebs);
 	err = ubi_change_vtbl_record(ubi, vol_id, &vtbl_rec);
 	if (err)
 		goto out_acc;
 
-	if (pebs < 0) {
-		for (i = 0; i < -pebs; i++) {
-			err = ubi_eba_unmap_leb(ubi, vol, reserved_pebs + i);
+	if (lebs < 0) {
+		for (i = 0; i < -lebs; i++) {
+			err = ubi_eba_unmap_leb(ubi, vol, reserved_lebs + i);
 			if (err)
 				goto out_acc;
 		}
+
 		spin_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs += pebs;
 		ubi->avail_pebs -= pebs;
 		ubi_update_reserved(ubi);
-		for (i = 0; i < reserved_pebs; i++)
+		for (i = 0; i < reserved_lebs; i++)
 			new_mapping[i] = vol->eba_tbl[i];
 		kfree(vol->eba_tbl);
 		vol->eba_tbl = new_mapping;
 		spin_unlock(&ubi->volumes_lock);
 	}
 
-	vol->reserved_pebs = reserved_pebs;
+	vol->reserved_lebs = reserved_lebs;
 	if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
-		vol->used_ebs = reserved_pebs;
+		vol->used_ebs = reserved_lebs;
 		vol->last_eb_bytes = vol->usable_leb_size;
 		vol->used_bytes =
 			(long long)vol->used_ebs * vol->usable_leb_size;
@@ -525,7 +553,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	return err;
 
 out_acc:
-	if (pebs > 0) {
+	if (lebs > 0) {
 		spin_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs -= pebs;
 		ubi->avail_pebs += pebs;
@@ -653,7 +681,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 	const char *name;
 
 	spin_lock(&ubi->volumes_lock);
-	reserved_pebs = be32_to_cpu(ubi->vtbl[vol_id].reserved_pebs);
+	reserved_pebs = be32_to_cpu(ubi->vtbl[vol_id].reserved_lebs);
 	vol = ubi->volumes[idx];
 
 	if (!vol) {
@@ -665,7 +693,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		return 0;
 	}
 
-	if (vol->reserved_pebs < 0 || vol->alignment < 0 || vol->data_pad < 0 ||
+	if (vol->reserved_lebs < 0 || vol->alignment < 0 || vol->data_pad < 0 ||
 	    vol->name_len < 0) {
 		ubi_err(ubi, "negative values");
 		goto fail;
@@ -698,7 +726,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		goto fail;
 	}
 
-	if (vol->reserved_pebs > ubi->good_peb_count) {
+	if (vol->reserved_lebs > ubi->good_peb_count) {
 		ubi_err(ubi, "too large reserved_pebs");
 		goto fail;
 	}
@@ -727,7 +755,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 			ubi_err(ubi, "corrupted dynamic volume");
 			goto fail;
 		}
-		if (vol->used_ebs != vol->reserved_pebs) {
+		if (vol->used_ebs != vol->reserved_lebs) {
 			ubi_err(ubi, "bad used_ebs");
 			goto fail;
 		}
@@ -740,7 +768,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 			goto fail;
 		}
 	} else {
-		if (vol->used_ebs < 0 || vol->used_ebs > vol->reserved_pebs) {
+		if (vol->used_ebs < 0 || vol->used_ebs > vol->reserved_lebs) {
 			ubi_err(ubi, "bad used_ebs");
 			goto fail;
 		}

@@ -142,7 +142,7 @@ int ubi_start_update(struct ubi_device *ubi, struct ubi_volume *vol,
 		return err;
 
 	/* Before updating - wipe out the volume */
-	for (i = 0; i < vol->reserved_pebs; i++) {
+	for (i = 0; i < vol->reserved_lebs; i++) {
 		err = ubi_eba_unmap_leb(ubi, vol, i);
 		if (err)
 			return err;
