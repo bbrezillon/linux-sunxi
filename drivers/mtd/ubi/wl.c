@@ -414,13 +414,18 @@ static int prot_queue_del(struct ubi_device *ubi, int pnum)
 {
 	struct ubi_wl_entry *e;
 
+	pr_info("%s:%i ubi = %p\n", __func__, __LINE__, ubi);
+	pr_info("%s:%i ubi->lookuptbl = %p\n", __func__, __LINE__, ubi->lookuptbl);
 	e = ubi->lookuptbl[pnum];
+	pr_info("%s:%i e = %p\n", __func__, __LINE__, e);
 	if (!e)
 		return -ENODEV;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (self_check_in_pq(ubi, e))
 		return -ENODEV;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	list_del(&e->u.list);
 	dbg_wl("deleted PEB %d from the protection queue", e->pnum);
 	return 0;
