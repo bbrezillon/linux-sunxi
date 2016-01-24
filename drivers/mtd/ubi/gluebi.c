@@ -127,6 +127,7 @@ static int gluebi_get_device(struct mtd_info *mtd)
 	 */
 	gluebi->desc = ubi_open_volume(gluebi->ubi_num, gluebi->vol_id,
 				       ubi_mode);
+	pr_info("%s:%i desc = %p\n", __func__, __LINE__, gluebi->desc);
 	if (IS_ERR(gluebi->desc)) {
 		mutex_unlock(&devices_mutex);
 		module_put(THIS_MODULE);
@@ -183,6 +184,7 @@ static int gluebi_read(struct mtd_info *mtd, loff_t from, size_t len,
 		if (to_read > bytes_left)
 			to_read = bytes_left;
 
+		pr_info("%s:%i desc = %p\n", __func__, __LINE__, gluebi->desc);
 		err = ubi_read(gluebi->desc, lnum, buf, offs, to_read);
 		if (err)
 			break;

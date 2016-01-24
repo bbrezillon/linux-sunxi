@@ -432,24 +432,29 @@ static int leb_read_sanity_check(struct ubi_volume_desc *desc, int lnum,
 int ubi_leb_read(struct ubi_volume_desc *desc, int lnum, char *buf, int offset,
 		 int len, int check)
 {
+	pr_info("%s:%i desc = %p\n", __func__, __LINE__, desc);
 	struct ubi_volume *vol = desc->vol;
 	struct ubi_device *ubi = vol->ubi;
 	int err, vol_id = vol->vol_id;
 
 	dbg_gen("read %d bytes from LEB %d:%d:%d", len, vol_id, lnum, offset);
+	pr_info("%s:%i\n", __func__, __LINE__);
 
 	err = leb_read_sanity_check(desc, lnum, offset, len);
 	if (err < 0)
 		return err;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (len == 0)
 		return 0;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_eba_read_leb(ubi, vol, lnum, buf, offset, len, check);
 	if (err && mtd_is_eccerr(err) && vol->vol_type == UBI_STATIC_VOLUME) {
 		ubi_warn(ubi, "mark volume %d as corrupted", vol_id);
 		vol->corrupted = 1;
 	}
+	pr_info("%s:%i\n", __func__, __LINE__);
 
 	return err;
 }

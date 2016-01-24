@@ -415,6 +415,7 @@ int mtd_pairing_info_to_wunit(struct mtd_info *mtd,
 		return info->pair;
 	}
 
+	pr_info("%s:%i pair = %d, group = %d\n", __func__, __LINE__, info->pair, info->group);
 	return mtd->pairing->get_wunit(mtd, info);
 }
 EXPORT_SYMBOL_GPL(mtd_pairing_info_to_wunit);
