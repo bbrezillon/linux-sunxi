@@ -566,12 +566,9 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	uint32_t uninitialized_var(crc);
 	struct ubi_leb_desc *clebs;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = leb_read_lock(ubi, vol_id, lnum);
 	if (err)
 		return err;
-
-	pr_info("%s:%i\n", __func__, __LINE__);
 
 	pnum = vol->eba_tbl[lnum];
 	if (pnum < 0) {
@@ -594,9 +591,7 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (vol->vol_type == UBI_DYNAMIC_VOLUME)
 		check = 0;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	clebs = ubi_eba_get_consolidated(ubi, pnum);
-	pr_info("%s:%i\n", __func__, __LINE__);
 	if (clebs) {
 		int lpos;
 
@@ -606,11 +601,9 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 				break;
 		}
 
-		pr_info("%s:%i\n", __func__, __LINE__);
 		if (lpos == ubi->lebs_per_consolidated_peb)
 			return -EINVAL;
 
-		pr_info("%s:%i\n", __func__, __LINE__);
 		loffs = ubi->leb_start + (lpos * ubi->leb_size);
 	}
 
@@ -654,12 +647,10 @@ retry:
 		ubi_free_vid_hdr(ubi, vid_hdr);
 	}
 
-	pr_info("%s:%i clebs = %p\n", __func__, __LINE__, clebs);
 	if (!clebs)
 		err = ubi_io_read_data(ubi, buf, pnum, offset, len);
 	else
 		err = ubi_io_raw_read(ubi, buf, pnum, offset + loffs, len);
-	pr_info("%s:%i\n", __func__, __LINE__);
 
 	if (err) {
 		if (err == UBI_IO_BITFLIPS)
@@ -1543,11 +1534,9 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 	ubi_assert(ubi->consolidated);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	if (!consolidation_needed(ubi))
 		return 0;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	clebs = find_consolidable_lebs(ubi);
 	if (IS_ERR(clebs))
 		return PTR_ERR(clebs);
@@ -1627,7 +1616,6 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		opnum = vol->eba_tbl[lnum];
 		vol->eba_tbl[lnum] = pnum;
 		ubi_wl_put_peb(ubi, vol_id, lnum, opnum, 0);
-		pr_info("%s:%i LEB %d consolidated into PEB %d\n", __func__, __LINE__, lnum, pnum);
 	}
 
 out_unlock_fm_eba:
@@ -1656,11 +1644,8 @@ static int consolidation_worker(struct ubi_device *ubi,
 	if (ret == -EAGAIN)
 		ret = 0;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
-	if (consolidation_needed(ubi)) {
-		pr_info("%s:%i\n", __func__, __LINE__);
+	if (consolidation_needed(ubi))
 		ubi_reschedule_work(ubi, wrk);
-	}
 
 	return ret;
 }

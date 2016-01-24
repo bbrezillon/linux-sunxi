@@ -191,7 +191,7 @@ static int __ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum,
 	int err, retries = 0;
 	size_t read;
 
-	pr_info("read %d bytes from PEB %d:%d (raw = %d)\n", len, pnum, offset, raw);
+	dbg_io("read %d bytes from PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
 	ubi_assert(offset >= 0 && offset + len <= peb_size);
@@ -294,11 +294,8 @@ int ubi_io_mtd_write(struct ubi_device *ubi, const void *buf, int pnum, int offs
 	int chunklen, err = 0, end = offset + len;
 	struct nand_pairing_info info;
 
-	pr_info("%s:%i offset = %d len = %d\n", __func__, __LINE__, offset, len);
-	if (raw || mtd_pairing_groups_per_eb(ubi->mtd) == 1) {
-		pr_info("%s:%i\n", __func__, __LINE__);
+	if (raw || mtd_pairing_groups_per_eb(ubi->mtd) == 1)
 		return mtd_write(ubi->mtd, addr + offset, len, written, buf);
-	}
 
 	info.pair = offset / ubi->mtd->writesize;
 	info.group = 0;
@@ -312,10 +309,8 @@ int ubi_io_mtd_write(struct ubi_device *ubi, const void *buf, int pnum, int offs
 				 end - offset);
 		realoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
 		realoffs *= ubi->mtd->writesize;
-		pr_info("read %x bytes %x \n", chunklen, realoffs);
 		err = mtd_write(ubi->mtd, addr + realoffs, chunklen,
 				&chunkwritten, buf);
-		pr_info("%s:%i written = %d len = %d\n", __func__, __LINE__, chunkwritten, chunklen);
 		*written += chunkwritten;
 		if (err && !mtd_is_bitflip(err))
 			return err;
@@ -353,7 +348,7 @@ static int __ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum,
 	int err;
 	size_t written;
 
-	pr_info("write %d bytes to PEB %d:%d (raw = %d)\n", len, pnum, offset, raw);
+	dbg_io("write %d bytes to PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
 	ubi_assert(offset >= 0 && offset + len <= peb_size);
@@ -1193,7 +1188,7 @@ int ubi_io_read_vid_hdrs(struct ubi_device *ubi, int pnum,
 				if (verbose && !i)
 					ubi_warn(ubi, "no VID header found at PEB %d, only 0xFF bytes",
 						 pnum);
-				pr_info("no VID header found at PEB %d, only 0xFF bytes",
+				dbg_bld("no VID header found at PEB %d, only 0xFF bytes",
 					pnum);
 				if (!read_err)
 					err = UBI_IO_FF;
@@ -1207,7 +1202,7 @@ int ubi_io_read_vid_hdrs(struct ubi_device *ubi, int pnum,
 						pnum, magic, UBI_VID_HDR_MAGIC);
 				ubi_dump_vid_hdr(vid_hdr);
 			}
-			pr_info("bad magic number at PEB %d: %08x instead of %08x\n",
+			dbg_bld("bad magic number at PEB %d: %08x instead of %08x",
 					pnum, magic, UBI_VID_HDR_MAGIC);
 			err = UBI_IO_BAD_HDR;
 			break;

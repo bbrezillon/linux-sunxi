@@ -151,7 +151,6 @@ static int add_to_list(struct ubi_attach_info *ai, int pnum, int ec,
 	if (!aeb)
 		return -ENOMEM;
 
-	pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 	INIT_LIST_HEAD(&aeb->list);
 	aeb->pnum = pnum;
 	aeb->ec = ec;
@@ -181,8 +180,6 @@ static int add_corrupted(struct ubi_attach_info *ai, int pnum, int ec)
 	aeb = kmem_cache_alloc(ai->apeb_slab_cache, GFP_KERNEL);
 	if (!aeb)
 		return -ENOMEM;
-
-	pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 
 	INIT_LIST_HEAD(&aeb->list);
 	ai->corr_peb_count += 1;
@@ -483,12 +480,10 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	dbg_bld("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d",
 		pnum, vol_id, lnum, ec, sqnum, bitflips);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	av = add_volume(ai, vol_id, pnum, vid_hdr);
 	if (IS_ERR(av))
 		return PTR_ERR(av);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	if (ai->max_sqnum < sqnum)
 		ai->max_sqnum = sqnum;
 
@@ -615,7 +610,6 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	av->leb_count += 1;
 	rb_link_node(&leb->rb, parent, p);
 	rb_insert_color(&leb->rb, &av->root);
-	pr_info("%s:%i\n", __func__, __LINE__);
 	return 0;
 }
 
@@ -945,7 +939,6 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	/* OK, we've done with the EC header, let's look at the VID header */
 	nvidh = ubi->lebs_per_consolidated_peb;
 	err = ubi_io_read_vid_hdrs(ubi, pnum, vidh, &nvidh, 0);
-	pr_info("%s:%i err = %d, nvid = %d\n", __func__, __LINE__, err, nvidh);
 	if (err < 0)
 		return err;
 	switch (err) {
@@ -1073,24 +1066,16 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	if (!aeb)
 		return -ENOMEM;
 
-	pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
-
 	aeb->consolidated = nvidh > 1;
 	aeb->refcount = nvidh;
 	aeb->pnum = pnum;
 	aeb->ec = ec;
-	pr_info("%s:%i add to used used pnum = %d\n", __func__, __LINE__, aeb->pnum);
 	list_add_tail(&aeb->list, &ai->used);
 
 	for (i = 0; i < nvidh; i++) {
-		pr_info("%s:%i LEB %d:%d (pos = %d) PEB %d\n", __func__, __LINE__,
-			be32_to_cpu(&vidh[i].vol_id), be32_to_cpu(&vidh[i].lnum), i, pnum);
 		err = ubi_add_to_av(ubi, ai, aeb, &vidh[i], i, bitflips, full);
 		if (err)
 			return err;
-		if (nvidh > 1)
-			pr_info("%s:%i LEB %d:%d is consolidated into PEB %d\n", __func__, __LINE__,
-				be32_to_cpu(&vidh[i].vol_id), be32_to_cpu(&vidh[i].lnum), pnum);
 	}
 
 adjust_mean_ec:
@@ -1246,27 +1231,22 @@ static void destroy_ai(struct ubi_attach_info *ai)
 
 	list_for_each_entry_safe(aeb, aeb_tmp, &ai->alien, list) {
 		list_del(&aeb->list);
-		pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 		kmem_cache_free(ai->apeb_slab_cache, aeb);
 	}
 	list_for_each_entry_safe(aeb, aeb_tmp, &ai->erase, list) {
 		list_del(&aeb->list);
-		pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 		kmem_cache_free(ai->apeb_slab_cache, aeb);
 	}
 	list_for_each_entry_safe(aeb, aeb_tmp, &ai->corr, list) {
 		list_del(&aeb->list);
-		pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 		kmem_cache_free(ai->apeb_slab_cache, aeb);
 	}
 	list_for_each_entry_safe(aeb, aeb_tmp, &ai->free, list) {
 		list_del(&aeb->list);
-		pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 		kmem_cache_free(ai->apeb_slab_cache, aeb);
 	}
 	list_for_each_entry_safe(aeb, aeb_tmp, &ai->used, list) {
 		list_del(&aeb->list);
-		pr_info("%s:%i aeb = %p\n", __func__, __LINE__, aeb);
 		kmem_cache_free(ai->apeb_slab_cache, aeb);
 	}
 

@@ -304,21 +304,17 @@ static int create_vtbl(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 	dbg_gen("create volume table (copy #%d)", copy + 1);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	vid_hdr = ubi_zalloc_vid_hdr(ubi, GFP_KERNEL);
 	if (!vid_hdr)
 		return -ENOMEM;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 retry:
-	pr_info("%s:%i\n", __func__, __LINE__);
 	new_aeb = ubi_early_get_peb(ubi, ai);
 	if (IS_ERR(new_aeb)) {
 		err = PTR_ERR(new_aeb);
 		goto out_free;
 	}
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	vid_hdr->vol_type = UBI_LAYOUT_VOLUME_TYPE;
 	vid_hdr->vol_id = cpu_to_be32(UBI_LAYOUT_VOLUME_ID);
 	vid_hdr->compat = UBI_LAYOUT_VOLUME_COMPAT;
@@ -327,19 +323,16 @@ retry:
 	vid_hdr->lnum = cpu_to_be32(copy);
 	vid_hdr->sqnum = cpu_to_be64(++ai->max_sqnum);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* The EC header is already there, write the VID header */
 	err = ubi_io_write_vid_hdr(ubi, new_aeb->pnum, vid_hdr);
 	if (err)
 		goto write_error;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* Write the layout volume contents */
 	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size);
 	if (err)
 		goto write_error;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum,
 				ubi->leb_size - ubi->min_io_size,
 				ubi->min_io_size);
@@ -349,13 +342,9 @@ retry:
 	 * And add it to the attaching information. Don't delete the old version
 	 * of this LEB as it will be deleted and freed in 'ubi_add_to_av()'.
 	 */
-	pr_info("%s:%i new_aeb = %p\n", __func__, __LINE__, new_aeb);
 	list_add_tail(&new_aeb->list, &ai->used);
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_add_to_av(ubi, ai, new_aeb, vid_hdr, 0, 0, true);
-	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_free_vid_hdr(ubi, vid_hdr);
-	pr_info("%s:%i\n", __func__, __LINE__);
 	return err;
 
 write_error:

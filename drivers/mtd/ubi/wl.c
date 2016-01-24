@@ -1529,7 +1529,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	struct ubi_wl_entry *e;
 	struct ubi_leb_desc *clebs;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi->used = ubi->erroneous = ubi->free = ubi->scrub = RB_ROOT;
 	spin_lock_init(&ubi->wl_lock);
 	mutex_init(&ubi->move_mutex);
@@ -1537,7 +1536,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	ubi->max_ec = ai->max_ec;
 	INIT_LIST_HEAD(&ubi->works);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	sprintf(ubi->bgt_name, UBI_BGT_NAME_PATTERN, ubi->ubi_num);
 
 	err = -ENOMEM;
@@ -1545,7 +1543,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	if (!ubi->lookuptbl)
 		return err;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* FIXME: make this creation optional. */
 	ubi->consolidated = kzalloc(ubi->peb_count * sizeof(void *),
 				    GFP_KERNEL);
@@ -1553,11 +1550,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		kfree(ubi->lookuptbl);
 		return err;
 	}
-	pr_info("%s:%i\n", __func__, __LINE__);
+
 	for (i = 0; i < UBI_PROT_QUEUE_LEN; i++)
 		INIT_LIST_HEAD(&ubi->pq[i]);
 	ubi->pq_head = 0;
-	pr_info("%s:%i\n", __func__, __LINE__);
+
 	list_for_each_entry_safe(peb, tmp, &ai->erase, list) {
 		cond_resched();
 
@@ -1580,7 +1577,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	}
 
 	ubi->free_count = 0;
-	pr_info("%s:%i\n", __func__, __LINE__);
 	list_for_each_entry(peb, &ai->free, list) {
 		cond_resched();
 
@@ -1603,21 +1599,15 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		found_pebs++;
 	}
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	list_for_each_entry(peb, &ai->used, list) {
-		pr_info("%s:%i\n", __func__, __LINE__);
-
 		e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
 		if (!e)
 			goto out_free;
 
-		pr_info("%s:%i peb = %p e = %p\n", __func__, __LINE__, peb, e);
 		e->pnum = peb->pnum;
 		e->ec = peb->ec;
-		pr_info("%s:%i\n", __func__, __LINE__);
 		ubi->lookuptbl[e->pnum] = e;
 
-		pr_info("%s:%i pnum = %d\n", __func__, __LINE__, e->pnum);
 		if (!peb->scrub) {
 			dbg_wl("add PEB %d EC %d to the used tree",
 			       e->pnum, e->ec);
@@ -1628,7 +1618,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			wl_tree_add(e, &ubi->scrub);
 		}
 
-		pr_info("%s:%i\n", __func__, __LINE__);
 		if (peb->consolidated) {
 			int i;
 
@@ -1646,11 +1635,9 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			ubi->consolidated[peb->pnum] = clebs;
 		}
 
-		pr_info("%s:%i\n", __func__, __LINE__);
 		found_pebs++;
 	}
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_rb_for_each_entry(rb1, av, &ai->volumes, rb) {
 		ubi_rb_for_each_entry(rb2, leb, &av->root, rb) {
 			cond_resched();
@@ -1660,9 +1647,7 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				clebs[leb->peb_pos] = leb->desc;
 		}
 	}
-	pr_info("%s:%i\n", __func__, __LINE__);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	dbg_wl("found %i PEBs", found_pebs);
 
 	if (ubi->fm) {
@@ -1692,13 +1677,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	ubi->avail_pebs -= reserved_pebs;
 	ubi->rsvd_pebs += reserved_pebs;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* Schedule wear-leveling if needed */
 	err = ensure_wear_leveling(ubi, 0);
 	if (err)
 		goto out_free;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	return 0;
 
 out_free:
