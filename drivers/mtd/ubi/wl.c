@@ -427,6 +427,7 @@ static int prot_queue_del(struct ubi_device *ubi, int pnum)
 
 	pr_info("%s:%i\n", __func__, __LINE__);
 	list_del(&e->u.list);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	dbg_wl("deleted PEB %d from the protection queue", e->pnum);
 	return 0;
 }

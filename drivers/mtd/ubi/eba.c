@@ -468,6 +468,7 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 				   int vol_id, int lnum)
 {
 	struct ubi_leb_desc *clebs = NULL;
+	bool found = false;
 	int i;
 
 	if (!ubi->consolidated)
@@ -481,12 +482,14 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 		if (clebs[i].lnum == lnum && clebs[i].vol_id == vol_id) {
 		    clebs[i].lnum = -1;
 		    clebs[i].vol_id = -1;
+		    found = true;
 		}
 
 		if (clebs[i].lnum >= 0 && clebs[i].vol_id >= 0)
 			return false;
 	}
 
+	ubi_assert(found);
 	ubi->consolidated[pnum] = NULL;
 	kfree(clebs);
 
@@ -1637,15 +1640,19 @@ static int consolidation_worker(struct ubi_device *ubi,
 {
 	int ret;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (shutdown)
 		return 0;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ret = consolidate_lebs(ubi);
 	if (ret == -EAGAIN)
 		ret = 0;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (consolidation_needed(ubi))
 		ubi_reschedule_work(ubi, wrk);
+	pr_info("%s:%i\n", __func__, __LINE__);
 
 	return ret;
 }
