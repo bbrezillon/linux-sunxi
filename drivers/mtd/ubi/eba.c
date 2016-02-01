@@ -48,6 +48,7 @@
 
 /* Number of physical eraseblocks reserved for atomic LEB change operation */
 #define EBA_RESERVED_PEBS 1
+#define EBA_CONSO_RESERVED_PEBS 1
 
 /**
  * next_sqnum - get next sequence number.
@@ -1791,6 +1792,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	struct ubi_volume *vol;
 	struct ubi_ainf_leb *aeb;
 	struct rb_node *rb;
+	int eba_rsvd = EBA_RESERVED_PEBS;
 
 	dbg_eba("initialize EBA sub-system");
 
@@ -1846,17 +1848,20 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		}
 	}
 
-	if (ubi->avail_pebs < EBA_RESERVED_PEBS) {
+	if (ubi->lebs_per_consolidated_peb > 1)
+		eba_rsvd += EBA_CONSO_RESERVED_PEBS;
+
+	if (ubi->avail_pebs < eba_rsvd) {
 		ubi_err(ubi, "no enough physical eraseblocks (%d, need %d)",
-			ubi->avail_pebs, EBA_RESERVED_PEBS);
+			ubi->avail_pebs, eba_rsvd);
 		if (ubi->corr_peb_count)
 			ubi_err(ubi, "%d PEBs are corrupted and not used",
 				ubi->corr_peb_count);
 		err = -ENOSPC;
 		goto out_free;
 	}
-	ubi->avail_pebs -= EBA_RESERVED_PEBS;
-	ubi->rsvd_pebs += EBA_RESERVED_PEBS;
+	ubi->avail_pebs -= eba_rsvd;
+	ubi->rsvd_pebs += eba_rsvd;
 
 	if (ubi->bad_allowed) {
 		ubi_calculate_reserved(ubi);
