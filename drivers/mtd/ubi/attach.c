@@ -560,6 +560,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			peb->scrub = ((cmp_res & 2) || bitflips || peb->scrub);
 			leb->copy_flag = vid_hdr->copy_flag;
 			leb->sqnum = sqnum;
+			leb->full = full;
 
 			if (av->highest_lnum == lnum)
 				av->last_data_size =
@@ -598,6 +599,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	peb->scrub = (bitflips || peb->scrub);
 	leb->copy_flag = vid_hdr->copy_flag;
 	leb->sqnum = sqnum;
+	leb->full = full;
 
 	if (av->highest_lnum <= lnum) {
 		av->highest_lnum = lnum;

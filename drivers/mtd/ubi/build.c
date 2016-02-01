@@ -366,7 +366,9 @@ static ssize_t dev_attribute_show(struct device *dev,
 	if (attr == &dev_eraseblock_size)
 		ret = sprintf(buf, "%d\n", ubi->leb_size);
 	else if (attr == &dev_avail_eraseblocks)
-		ret = sprintf(buf, "%d\n", ubi->avail_pebs);
+		ret = sprintf(buf, "%d\n",
+			      ubi->avail_pebs *
+			      ubi->lebs_per_consolidated_peb);
 	else if (attr == &dev_total_eraseblocks)
 		ret = sprintf(buf, "%d\n", ubi->good_peb_count);
 	else if (attr == &dev_volumes_count)
