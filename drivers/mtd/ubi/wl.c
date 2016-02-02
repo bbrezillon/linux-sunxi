@@ -1631,6 +1631,8 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				clebs[i].lnum = -1;
 				clebs[i].vol_id = -1;
 			}
+
+			ubi->consolidated[peb->pnum] = clebs;
 		}
 
 		found_pebs++;

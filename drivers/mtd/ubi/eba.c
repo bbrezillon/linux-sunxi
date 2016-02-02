@@ -1604,8 +1604,11 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
+		int opnum;
 
+		opnum = vol->eba_tbl[lnum];
 		vol->eba_tbl[lnum] = pnum;
+		ubi_wl_put_peb(ubi, vol_id, lnum, opnum, 0);
 	}
 
 out_unlock_fm_eba:

@@ -594,6 +594,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return -ENOMEM;
 
 	leb->peb = peb;
+	leb->peb_pos = peb_pos;
 	leb->desc.vol_id = vol_id;
 	leb->desc.lnum = lnum;
 	peb->scrub = (bitflips || peb->scrub);
