@@ -423,13 +423,20 @@ err:
 
 static bool consolidation_needed(struct ubi_device *ubi)
 {
-	bool ret;
+	int full_cnt, free_cnt;
 
 	spin_lock(&ubi->full_lock);
-	ret = ubi->full_count >= ubi->consolidation_threshold;
+	full_cnt = ubi->full_count;
 	spin_unlock(&ubi->full_lock);
 
-	return ret;
+	if (full_cnt < ubi->lebs_per_consolidated_peb)
+		return false;
+
+	spin_lock(&ubi->wl_lock);
+	free_cnt = ubi->free_count - ubi->beb_rsvd_pebs;
+	spin_unlock(&ubi->wl_lock);
+
+	return free_cnt <= ubi->consolidation_threshold;
 }
 
 static void remove_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
@@ -1808,7 +1815,9 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	ubi->full_count = 0;
 	ubi->consolidation_work.func = consolidation_worker;
 	INIT_LIST_HEAD(&ubi->consolidation_work.list);
-	ubi->consolidation_threshold = ubi->lebs_per_consolidated_peb;
+	ubi->consolidation_threshold = (ubi->avail_pebs + ubi->rsvd_pebs) / 3;
+	if (ubi->consolidation_threshold < ubi->lebs_per_consolidated_peb)
+		ubi->consolidation_threshold = ubi->lebs_per_consolidated_peb;
 
 	ubi->global_sqnum = ai->max_sqnum + 1;
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
