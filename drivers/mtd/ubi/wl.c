@@ -397,6 +397,7 @@ static struct ubi_wl_entry *wl_get_wle(struct ubi_device *ubi)
 	 */
 	rb_erase(&e->u.rb, &ubi->free);
 	ubi->free_count--;
+	pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 	dbg_wl("PEB %d EC %d", e->pnum, e->ec);
 
 	return e;
@@ -749,6 +750,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 			/* Give the unused PEB back */
 			wl_tree_add(e2, &ubi->free);
 			ubi->free_count++;
+			pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 			goto out_cancel;
 		}
 		self_check_in_wl_tree(ubi, e1, &ubi->used);
@@ -1065,11 +1067,14 @@ static int __erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk)
 	dbg_wl("erase PEB %d EC %d LEB %d:%d",
 	       pnum, e->ec, wl_wrk->vol_id, wl_wrk->lnum);
 
+	pr_info("%s:%i PEB %d\n", __func__, __LINE__, wl_wrk->e->pnum);
+
 	err = sync_erase(ubi, e, wl_wrk->torture);
 	if (!err) {
 		spin_lock(&ubi->wl_lock);
 		wl_tree_add(e, &ubi->free);
 		ubi->free_count++;
+		pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 		spin_unlock(&ubi->wl_lock);
 
 		/*
@@ -1182,6 +1187,7 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
 		return 0;
 	}
 
+	pr_info("%s:%i PEB %d\n", __func__, __LINE__, wl_wrk->e->pnum);
 	ret = __erase_worker(ubi, wl_wrk);
 	kfree(wl_wrk);
 	return ret;
@@ -1210,6 +1216,7 @@ int ubi_wl_put_peb(struct ubi_device *ubi, int vol_id, int lnum,
 	ubi_assert(pnum >= 0);
 	ubi_assert(pnum < ubi->peb_count);
 
+	pr_info("%s:%i PEB %d\n", __func__, __LINE__, pnum);
 	down_read(&ubi->fm_protect);
 
 retry:
@@ -1271,6 +1278,7 @@ retry:
 	}
 	spin_unlock(&ubi->wl_lock);
 
+	pr_info("%s:%i PEB %d\n", __func__, __LINE__, pnum);
 	err = schedule_erase(ubi, e, vol_id, lnum, torture);
 	if (err) {
 		spin_lock(&ubi->wl_lock);
@@ -1598,6 +1606,7 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		ubi_assert(e->ec >= 0);
 
 		wl_tree_add(e, &ubi->free);
+		pr_info("%s:%i PEB %d is free\n", __func__, __LINE__, peb->pnum);
 		ubi->free_count++;
 
 		ubi->lookuptbl[e->pnum] = e;
@@ -1648,7 +1657,10 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		ubi_rb_for_each_entry(rb2, leb, &av->root, rb) {
 			cond_resched();
 
+			pr_info("%s:%i pnum = %d lnum = %d vol_id = %d peb_pos = %d\n", __func__, __LINE__,
+				leb->peb->pnum, leb->desc.lnum, leb->desc.vol_id, leb->peb_pos);
 			clebs = ubi->consolidated[leb->peb->pnum];
+			pr_info("%s:%i clebs = %p\n", __func__, __LINE__, clebs);
 			if (clebs)
 				clebs[leb->peb_pos] = leb->desc;
 		}

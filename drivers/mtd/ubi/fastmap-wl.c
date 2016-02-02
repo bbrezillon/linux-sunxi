@@ -63,6 +63,7 @@ static void return_unused_pool_pebs(struct ubi_device *ubi,
 		e = ubi->lookuptbl[pool->pebs[i]];
 		wl_tree_add(e, &ubi->free);
 		ubi->free_count++;
+		pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 	}
 }
 
@@ -108,6 +109,7 @@ struct ubi_wl_entry *ubi_wl_get_fm_peb(struct ubi_device *ubi, int anchor)
 	 * the wl subsystem does no longer know this erase block */
 	rb_erase(&e->u.rb, &ubi->free);
 	ubi->free_count--;
+	pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 out:
 	return e;
 }
@@ -155,6 +157,7 @@ void ubi_refill_pools(struct ubi_device *ubi)
 			self_check_in_wl_tree(ubi, e, &ubi->free);
 			rb_erase(&e->u.rb, &ubi->free);
 			ubi->free_count--;
+			pr_info("%s:%i ubi->free_count = %d\n", __func__, __LINE__, ubi->free_count);
 
 			wl_pool->pebs[wl_pool->size] = e->pnum;
 			wl_pool->size++;
@@ -210,6 +213,7 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 	struct ubi_fm_pool *wl_pool = &ubi->fm_wl_pool;
 
 again:
+	pr_info("%s:%i\n", __func__, __LINE__);
 	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
 
@@ -218,6 +222,7 @@ again:
 	if (pool->used == pool->size || wl_pool->used == wl_pool->size) {
 		spin_unlock(&ubi->wl_lock);
 		up_read(&ubi->fm_eba_sem);
+		pr_info("%s:%i\n", __func__, __LINE__);
 		ret = ubi_update_fastmap(ubi);
 		if (ret) {
 			ubi_msg(ubi, "Unable to write a new fastmap: %i", ret);
@@ -242,6 +247,7 @@ again:
 			down_read(&ubi->fm_eba_sem);
 			goto out;
 		}
+		pr_info("%s:%i\n", __func__, __LINE__);
 		goto again;
 	}
 
@@ -250,6 +256,7 @@ again:
 	prot_queue_add(ubi, ubi->lookuptbl[ret]);
 	spin_unlock(&ubi->wl_lock);
 out:
+	pr_info("%s:%i PEB %d\n", __func__, __LINE__, ret);
 	return ret;
 }
 

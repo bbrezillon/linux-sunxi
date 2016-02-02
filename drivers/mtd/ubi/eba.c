@@ -429,12 +429,15 @@ static bool consolidation_needed(struct ubi_device *ubi)
 	full_cnt = ubi->full_count;
 	spin_unlock(&ubi->full_lock);
 
+	pr_info("%s:%i lebs_per_consolidated_peb = %d full count = %d\n", __func__, __LINE__, ubi->lebs_per_consolidated_peb, full_cnt);
 	if (full_cnt < ubi->lebs_per_consolidated_peb)
 		return false;
 
 	spin_lock(&ubi->wl_lock);
 	free_cnt = ubi->free_count - ubi->beb_rsvd_pebs;
 	spin_unlock(&ubi->wl_lock);
+
+	pr_info("%s:%i conso threshold = %d free count = %d %d %d\n", __func__, __LINE__, ubi->consolidation_threshold, free_cnt, ubi->free_count, ubi->beb_rsvd_pebs);
 
 	return free_cnt <= ubi->consolidation_threshold;
 }
@@ -471,24 +474,32 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 	bool found = false;
 	int i;
 
+	pr_info("%s:%i pnum = %d lnum = %d vol_id = %d\n", __func__, __LINE__, pnum, lnum, vol_id);
 	if (!ubi->consolidated)
 		return true;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	clebs = ubi->consolidated[pnum];
+	pr_info("%s:%i clebs = %p\n", __func__, __LINE__, clebs);
 	if (!clebs)
 		return true;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+		pr_info("%s:%i lnum = %d vol_id = %d\n", __func__, __LINE__, clebs[i].lnum, clebs[i].vol_id);
 		if (clebs[i].lnum == lnum && clebs[i].vol_id == vol_id) {
 		    clebs[i].lnum = -1;
 		    clebs[i].vol_id = -1;
 		    found = true;
 		}
 
-		if (clebs[i].lnum >= 0 && clebs[i].vol_id >= 0)
+		if (clebs[i].lnum >= 0 && clebs[i].vol_id >= 0) {
+			pr_info("%s:%i\n", __func__, __LINE__);
 			return false;
+		}
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_assert(found);
 	ubi->consolidated[pnum] = NULL;
 	kfree(clebs);
@@ -530,10 +541,13 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	vol->eba_tbl[lnum] = UBI_LEB_UNMAPPED;
 	release_peb = ubi_eba_invalidate_leb(ubi, pnum, vol_id, lnum);
 	up_read(&ubi->fm_eba_sem);
-	if (release_peb)
+	if (release_peb) {
+		pr_info("%s:%i PEB %d\n", __func__, __LINE__, pnum);
 		err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
-	else
+	} else {
+		pr_info("%s:%i PEB %d\n", __func__, __LINE__, pnum);
 		err = 0;
+	}
 
 	remove_full_leb(ubi, vol_id, lnum);
 
@@ -1588,7 +1602,9 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	 */
 	memset(ubi->peb_buf + offset, 0, ubi->consolidated_peb_size - offset);
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	pnum = ubi_wl_get_peb(ubi);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (pnum < 0) {
 		err = pnum;
 		goto out_unlock_fm_eba;
@@ -1646,6 +1662,7 @@ static int consolidation_worker(struct ubi_device *ubi,
 
 	pr_info("%s:%i\n", __func__, __LINE__);
 	ret = consolidate_lebs(ubi);
+	pr_info("%s:%i ret = %d\n", __func__, __LINE__, ret);
 	if (ret == -EAGAIN)
 		ret = 0;
 
@@ -1826,6 +1843,8 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	if (ubi->consolidation_threshold < ubi->lebs_per_consolidated_peb)
 		ubi->consolidation_threshold = ubi->lebs_per_consolidated_peb;
 
+	pr_info("%s:%i conso threshold = %d\n", __func__, __LINE__, ubi->consolidation_threshold);
+
 	ubi->global_sqnum = ai->max_sqnum + 1;
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
 
@@ -1860,9 +1879,11 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 					list_move_tail(&aeb->peb->list, &ai->erase);
 			} else {
 				vol->eba_tbl[aeb->desc.lnum] = aeb->peb->pnum;
-				if (aeb->full)
+				if (aeb->full) {
+					pr_info("%s:%i FULL LEB\n", __func__, __LINE__);
 					add_full_leb(ubi, vol->vol_id,
 						     aeb->desc.lnum);
+				}
 			}
 		}
 	}

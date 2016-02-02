@@ -1580,6 +1580,7 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 
 	down_write(&ubi->fm_protect);
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_refill_pools(ubi);
 
 	if (ubi->ro_mode || ubi->fm_disabled) {
