@@ -312,10 +312,106 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 	spin_unlock(&ubi->ltree_lock);
 }
 
+static bool consolidation_needed(struct ubi_device *ubi)
+{
+	int free_cnt;
+
+	if (!ubi->consolidated)
+		return false;
+
+	if (ubi->full_count < ubi->lebs_per_consolidated_peb)
+		return false;
+
+	free_cnt = ubi->free_count - ubi->beb_rsvd_pebs;
+
+	return free_cnt <= ubi->consolidation_threshold;
+}
+
+static int schedule_consolidation(struct ubi_device *ubi)
+{
+	struct ubi_leb_desc cleb;
+	struct ubi_full_leb *fleb;
+	LIST_HEAD(lebs);
+	int i, err = 0;
+
+	if (!consolidation_needed(ubi))
+		return 0;
+
+	for (i = 0; i < ubi->lebs_per_consolidated_peb;) {
+		bool retry = true;
+
+		spin_lock(&ubi->full_lock);
+		fleb = list_first_entry_or_null(&ubi->full,
+						struct ubi_full_leb, node);
+		/*
+		 * We have to copy LEB info in a local variable because the
+		 * fleb might be freed under our feets.
+		 */
+		if (fleb)
+			cleb = fleb->desc;
+		spin_unlock(&ubi->full_lock);
+
+		if (!fleb)
+			goto err;
+
+		err = leb_read_lock(ubi, cleb.vol_id, cleb.lnum);
+		if (err)
+			goto err;
+
+		spin_lock(&ubi->full_lock);
+		/*
+		 * The LEB may have been removed from the full list while we
+		 * were trying to acquire the lock.
+		 * In this case we should just try to acquire the next entry in
+		 * the full list.
+		 */
+		if (fleb == list_first_entry_or_null(&ubi->full,
+						     struct ubi_full_leb,
+						     node)) {
+			list_del(&fleb->node);
+			list_add_tail(&fleb->node, &lebs);
+			ubi->full_count--;
+			retry = false;
+		}
+		spin_unlock(&ubi->full_lock);
+
+		if (retry) {
+			leb_read_unlock(ubi, cleb.vol_id, cleb.lnum);
+			continue;
+		}
+
+		i++;
+	}
+
+	spin_lock(&ubi->full_lock);
+	list_splice(&lebs, &ubi->consolidating);
+	spin_unlock(&ubi->full_lock);
+
+	ubi_schedule_work(ubi, &ubi->consolidation_work);
+
+	return err;
+
+err:
+	/* Put all LEBs back in the full list */
+	while (!list_empty(&lebs)) {
+		fleb = list_first_entry(&lebs, struct ubi_full_leb, node);
+		list_del(&fleb->node);
+		spin_lock(&ubi->full_lock);
+		list_add_tail(&fleb->node, &ubi->full);
+		ubi->full_count++;
+		spin_unlock(&ubi->full_lock);
+
+		leb_read_unlock(ubi, fleb->desc.vol_id, fleb->desc.lnum);
+	}
+
+
+	return err;
+}
 
 static int add_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
 {
 	struct ubi_full_leb *fleb;
+	int full_cnt;
 
 	/*
 	 * We don't track full LEBs if we don't need to (which is the case
@@ -334,112 +430,12 @@ static int add_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
 	spin_lock(&ubi->full_lock);
 	list_add_tail(&fleb->node, &ubi->full);
 	ubi->full_count++;
-	spin_unlock(&ubi->full_lock);
-
-	return 0;
-}
-
-static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
-{
-	struct ubi_leb_desc *clebs;
-	struct ubi_full_leb *fleb;
-	LIST_HEAD(full);
-	int i, err = 0;
-	/*
-	 * We don't track full LEBs if we don't need to (which is the case
-	 * UBI does not need or does not support LEB consolidation).
-	 */
-	if (!ubi->consolidated)
-		return ERR_PTR(-ENOTSUPP);
-
-	spin_lock(&ubi->full_lock);
-	if (ubi->full_count < ubi->lebs_per_consolidated_peb)
-		err = -EAGAIN;
-	spin_unlock(&ubi->full_lock);
-	if (err)
-		return ERR_PTR(err);
-
-	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidated_peb, GFP_KERNEL);
-	if (!clebs)
-		return ERR_PTR(-ENOMEM);
-
-	for (i = 0; i < ubi->lebs_per_consolidated_peb;) {
-		bool retry = true;
-
-		spin_lock(&ubi->full_lock);
-		fleb = list_first_entry_or_null(&ubi->full,
-						struct ubi_full_leb, node);
-		clebs[i] = fleb->desc;
-		spin_unlock(&ubi->full_lock);
-
-		if (!fleb) {
-			err = -EAGAIN;
-			goto err;
-		}
-
-		err = leb_read_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
-		if (err)
-			goto err;
-
-		spin_lock(&ubi->full_lock);
-		if (fleb == list_first_entry_or_null(&ubi->full,
-						     struct ubi_full_leb,
-						     node)) {
-			list_del(&fleb->node);
-			list_add_tail(&fleb->node, &full);
-			ubi->full_count--;
-			retry = false;
-		}
-		spin_unlock(&ubi->full_lock);
-
-		if (retry) {
-			leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
-			continue;
-		}
-
-		i++;
-	}
-
-
-	while(!list_empty(&full)) {
-		fleb = list_first_entry(&full, struct ubi_full_leb, node);
-		list_del(&fleb->node);
-		kfree(fleb);
-	}
-
-	return clebs;
-
-err:
-	spin_lock(&ubi->full_lock);
-	for (i--; i >= 0; i--)
-		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
-	list_splice(&full, &ubi->full);
-	ubi->full_count += i;
-	spin_unlock(&ubi->full_lock);
-	kfree(clebs);
-
-	return ERR_PTR(err);
-}
-
-static bool consolidation_needed(struct ubi_device *ubi)
-{
-	int full_cnt, free_cnt;
-
-	spin_lock(&ubi->full_lock);
 	full_cnt = ubi->full_count;
 	spin_unlock(&ubi->full_lock);
 
 	pr_info("%s:%i lebs_per_consolidated_peb = %d full count = %d\n", __func__, __LINE__, ubi->lebs_per_consolidated_peb, full_cnt);
-	if (full_cnt < ubi->lebs_per_consolidated_peb)
-		return false;
 
-	spin_lock(&ubi->wl_lock);
-	free_cnt = ubi->free_count - ubi->beb_rsvd_pebs;
-	spin_unlock(&ubi->wl_lock);
-
-	pr_info("%s:%i conso threshold = %d free count = %d %d %d\n", __func__, __LINE__, ubi->consolidation_threshold, free_cnt, ubi->free_count, ubi->beb_rsvd_pebs);
-
-	return free_cnt <= ubi->consolidation_threshold;
+	return 0;
 }
 
 static void remove_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
@@ -932,8 +928,8 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 
 		leb_write_unlock(ubi, vol_id, lnum);
 
-		if (full && !err && consolidation_needed(ubi))
-			ubi_reschedule_work(ubi, &ubi->consolidation_work);
+		if (full)
+			schedule_consolidation(ubi);
 
 		return err;
 	}
@@ -999,8 +995,8 @@ retry:
 	leb_write_unlock(ubi, vol_id, lnum);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 
-	if (full && consolidation_needed(ubi))
-		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+	if (full)
+		schedule_consolidation(ubi);
 
 	return 0;
 
@@ -1130,8 +1126,7 @@ retry:
 	leb_write_unlock(ubi, vol_id, lnum);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 
-	if (consolidation_needed(ubi))
-		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+	schedule_consolidation(ubi);
 
 	return 0;
 
@@ -1280,8 +1275,8 @@ out_mutex:
 	mutex_unlock(&ubi->alc_mutex);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 
-	if (full && !err && consolidation_needed(ubi))
-		ubi_reschedule_work(ubi, &ubi->consolidation_work);
+	if (full && !err)
+		schedule_consolidation(ubi);
 
 	return err;
 
@@ -1534,37 +1529,47 @@ out_unlock_leb:
 	return err;
 }
 
-static void consolidation_unlock(struct ubi_device *ubi,
-				 struct ubi_leb_desc *clebs)
-{
-	int i;
-
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
-		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
-}
-
 static int consolidate_lebs(struct ubi_device *ubi)
 {
 	int i, pnum, offset = ubi->leb_start, err = 0;
+	struct ubi_leb_desc *clebs = NULL;
 	struct ubi_vid_hdr *vid_hdrs;
-	struct ubi_leb_desc *clebs;
+	struct ubi_full_leb *fleb;
+	LIST_HEAD(lebs);
 
 	ubi_assert(ubi->consolidated);
 
-	if (!consolidation_needed(ubi))
+	spin_lock(&ubi->full_lock);
+	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+		if (list_empty(&ubi->consolidating)) {
+			list_splice(&lebs, &ubi->consolidating);
+			break;
+		}
+
+		fleb = list_first_entry(&ubi->consolidating,
+					struct ubi_full_leb, node);
+		list_del(&fleb->node);
+		list_add_tail(&fleb->node, &lebs);
+	}
+	spin_unlock(&ubi->full_lock);
+
+	if (i < ubi->lebs_per_consolidated_peb)
 		return 0;
 
-	clebs = find_consolidable_lebs(ubi);
-	if (IS_ERR(clebs))
-		return PTR_ERR(clebs);
+	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidated_peb,
+			GFP_KERNEL);
+	if (!clebs) {
+		err = -ENOMEM;
+		goto out;
+	}
 
 	mutex_lock(&ubi->buf_mutex);
 
 	memset(ubi->peb_buf + ubi->vid_hdr_aloffset, 0, ubi->vid_hdr_alsize);
 	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset + ubi->vid_hdr_shift;
 
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
-		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
+	list_for_each_entry(fleb, &lebs, node) {
+		int vol_id = fleb->desc.vol_id, lnum = fleb->desc.lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 		int spnum = vol->eba_tbl[lnum];
 		void *buf = ubi->peb_buf + offset;
@@ -1574,7 +1579,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 		err = ubi_io_read_data(ubi, buf, spnum, 0, ubi->leb_size);
 		if (err)
-			goto out;
+			goto out_unlock_buf;
 
 		vid_hdrs[i].sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
 		vid_hdrs[i].vol_id = cpu_to_be32(vol_id);
@@ -1639,13 +1644,24 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 out_unlock_fm_eba:
 	up_read(&ubi->fm_eba_sem);
-out:
+out_unlock_buf:
 	mutex_unlock(&ubi->buf_mutex);
+out:
 	if (err) {
-		for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
-			add_full_leb(ubi, clebs[i].vol_id, clebs[i].lnum);
+		spin_lock(&ubi->full_lock);
+		list_splice(&lebs, &ubi->consolidating);
+		spin_unlock(&ubi->full_lock);
+		kfree(clebs);
+	} else {
+		while (!list_empty(&lebs)) {
+			fleb = list_first_entry(&ubi->consolidating,
+						struct ubi_full_leb, node);
+			leb_read_unlock(ubi, fleb->desc.vol_id,
+					fleb->desc.lnum);
+			list_del(&fleb->node);
+			kfree(fleb);
+		}
 	}
-	consolidation_unlock(ubi, clebs);
 
 	return err;
 }
@@ -1654,6 +1670,7 @@ static int consolidation_worker(struct ubi_device *ubi,
 				struct ubi_work *wrk,
 				int shutdown)
 {
+	bool reschedule = false;
 	int ret;
 
 	pr_info("%s:%i\n", __func__, __LINE__);
@@ -1667,8 +1684,16 @@ static int consolidation_worker(struct ubi_device *ubi,
 		ret = 0;
 
 	pr_info("%s:%i\n", __func__, __LINE__);
-	if (consolidation_needed(ubi))
+	spin_lock(&ubi->full_lock);
+	if (!list_empty(&ubi->consolidating))
+		reschedule = true;
+	spin_unlock(&ubi->full_lock);
+
+	pr_info("%s:%i\n", __func__, __LINE__);
+	if (reschedule) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		ubi_reschedule_work(ubi, wrk);
+	}
 	pr_info("%s:%i\n", __func__, __LINE__);
 
 	return ret;
@@ -1836,6 +1861,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 
 	spin_lock_init(&ubi->full_lock);
 	INIT_LIST_HEAD(&ubi->full);
+	INIT_LIST_HEAD(&ubi->consolidating);
 	ubi->full_count = 0;
 	ubi->consolidation_work.func = consolidation_worker;
 	INIT_LIST_HEAD(&ubi->consolidation_work.list);

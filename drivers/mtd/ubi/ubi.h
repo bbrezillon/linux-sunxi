@@ -619,10 +619,10 @@ struct ubi_device {
 	struct ubi_leb_desc **consolidated;
 	spinlock_t full_lock;
 	struct list_head full;
+	struct list_head consolidating;
 	int full_count;
 	int consolidation_threshold;
 	struct ubi_work consolidation_work;
-	struct list_head consolidable;
 	struct mutex alc_mutex;
 
 	/* Fastmap stuff */
