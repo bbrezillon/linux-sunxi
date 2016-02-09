@@ -1884,7 +1884,13 @@ int ubi_wl_get_peb(struct ubi_device *ubi, bool nested)
 retry:
 	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
-	if (!ubi->free.rb_node && !nested) {
+	if (!ubi->free.rb_node) {
+		if (nested) {
+			spin_unlock(&ubi->wl_lock);
+			up_read(&ubi->fm_eba_sem);
+			return -ENOSPC;
+		}
+
 		if (ubi->works_count == 0) {
 			ubi_eba_consolidate(ubi);
 			if (ubi->works_count == 0) {
