@@ -377,6 +377,10 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 			goto err;
 		}
 
+		if (i == 0) { //XXX WTF?
+			BUG_ON(clebs[0].lnum == clebs[1].lnum && clebs[0].vol_id == clebs[1].vol_id);
+		}
+
 		err = leb_read_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
 		if (err)
 			goto err;
