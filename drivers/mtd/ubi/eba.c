@@ -377,6 +377,10 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 			goto err;
 		}
 
+		if (i == 0) { //XXX WTF?
+			BUG_ON(clebs[0].lnum == clebs[1].lnum && clebs[0].vol_id == clebs[1].vol_id);
+		}
+
 		err = leb_read_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
 		if (err)
 			goto err;
@@ -1557,9 +1561,15 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
-		int spnum = vol->eba_tbl[lnum];
 		void *buf = ubi->peb_buf + offset;
 		u32 crc;
+		int spnum;
+
+		//XXX volume vanished
+		if (!vol)
+			continue;
+
+		spnum = vol->eba_tbl[lnum];
 
 		ubi_assert(!ubi->consolidated[spnum]);
 
@@ -1614,6 +1624,10 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
 		int opnum;
+
+		//XXX volume vanished
+		if (!vol)
+			continue;
 
 		opnum = vol->eba_tbl[lnum];
 		vol->eba_tbl[lnum] = pnum;

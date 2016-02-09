@@ -355,6 +355,8 @@ static struct ubi_wl_entry *find_mean_wl_entry(struct ubi_device *ubi,
 {
 	struct ubi_wl_entry *e, *first, *last;
 
+	ubi_assert(ubi->free.rb_node);
+
 	first = rb_entry(rb_first(root), struct ubi_wl_entry, u.rb);
 	last = rb_entry(rb_last(root), struct ubi_wl_entry, u.rb);
 
@@ -1884,7 +1886,13 @@ int ubi_wl_get_peb(struct ubi_device *ubi, bool nested)
 retry:
 	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
-	if (!ubi->free.rb_node && !nested) {
+	if (!ubi->free.rb_node) {
+		if (nested) {
+			spin_unlock(&ubi->wl_lock);
+			up_read(&ubi->fm_eba_sem);
+			return -ENOSPC;
+		}
+
 		if (ubi->works_count == 0) {
 			ubi_eba_consolidate(ubi);
 			if (ubi->works_count == 0) {
