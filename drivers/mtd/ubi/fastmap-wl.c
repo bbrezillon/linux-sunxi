@@ -184,7 +184,13 @@ static int produce_free_peb(struct ubi_device *ubi)
 {
 	int err;
 
-	while (!ubi->free.rb_node && ubi->works_count) {
+	while (!ubi->free.rb_node) {
+		if (!ubi->works_count) {
+			ubi_eba_consolidate(ubi);
+			if (!ubi->works_count)
+				break;
+		}
+
 		dbg_wl("do one work synchronously");
 		err = do_work(ubi);
 

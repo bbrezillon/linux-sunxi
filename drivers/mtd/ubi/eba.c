@@ -421,25 +421,30 @@ err:
 	return ERR_PTR(err);
 }
 
-static bool consolidation_needed(struct ubi_device *ubi)
+static bool consolidation_possible(struct ubi_device *ubi)
 {
-	int full_cnt, free_cnt;
-
 	if (!ubi->consolidated)
 		return false;
 
-	spin_lock(&ubi->full_lock);
-	full_cnt = ubi->full_count;
-	spin_unlock(&ubi->full_lock);
-
-	if (full_cnt < ubi->lebs_per_cpeb)
+	if (ubi->full_count < ubi->lebs_per_cpeb)
 		return false;
 
-	spin_lock(&ubi->wl_lock);
-	free_cnt = ubi->free_count - ubi->beb_rsvd_pebs;
-	spin_unlock(&ubi->wl_lock);
+	return true;
+}
 
-	return free_cnt <= ubi->consolidation_threshold;
+static bool consolidation_needed(struct ubi_device *ubi)
+{
+	if (!consolidation_possible(ubi))
+		return false;
+
+	return ubi->free_count - ubi->beb_rsvd_pebs <=
+	       ubi->consolidation_threshold;
+}
+
+void ubi_eba_consolidate(struct ubi_device *ubi)
+{
+	if (consolidation_possible(ubi))
+		ubi_schedule_work(ubi, &ubi->consolidation_work);
 }
 
 static void remove_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
