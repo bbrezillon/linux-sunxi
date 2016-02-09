@@ -203,7 +203,7 @@ static int produce_free_peb(struct ubi_device *ubi)
  * negative error code in case of failure.
  * Returns with ubi->fm_eba_sem held in read mode!
  */
-int ubi_wl_get_peb(struct ubi_device *ubi)
+int ubi_wl_get_peb(struct ubi_device *ubi, bool nested)
 {
 	int ret, retried = 0;
 	struct ubi_fm_pool *pool = &ubi->fm_pool;
@@ -212,6 +212,15 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 again:
 	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
+
+	if (nested) {
+		if (pool->used == pool->size) {
+			ret = -ENOSPC;
+			goto out_unlock;
+		}
+
+		goto out_get_peb;
+	}
 
 	/* We check here also for the WL pool because at this point we can
 	 * refill the WL pool synchronous. */
@@ -245,9 +254,11 @@ again:
 		goto again;
 	}
 
+out_get_peb:
 	ubi_assert(pool->used < pool->size);
 	ret = pool->pebs[pool->used++];
 	prot_queue_add(ubi, ubi->lookuptbl[ret]);
+out_unlock:
 	spin_unlock(&ubi->wl_lock);
 out:
 	return ret;
@@ -344,7 +355,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 	spin_unlock(&ubi->wl_lock);
 
 	vol_id = lnum ? UBI_FM_DATA_VOLUME_ID : UBI_FM_SB_VOLUME_ID;
-	return schedule_erase(ubi, e, vol_id, lnum, torture);
+	return schedule_erase(ubi, e, vol_id, lnum, torture, false);
 }
 
 /**

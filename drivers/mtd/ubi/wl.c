@@ -605,7 +605,7 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
  * failure.
  */
 static int schedule_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
-			  int vol_id, int lnum, int torture)
+			  int vol_id, int lnum, int torture, bool nested)
 {
 	struct ubi_work *wl_wrk;
 
@@ -624,7 +624,11 @@ static int schedule_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 	wl_wrk->lnum = lnum;
 	wl_wrk->torture = torture;
 
-	schedule_ubi_work(ubi, wl_wrk);
+	if (nested)
+		__schedule_ubi_work(ubi, wl_wrk);
+	else
+		schedule_ubi_work(ubi, wl_wrk);
+
 	return 0;
 }
 
@@ -1099,7 +1103,7 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
 		int err1;
 
 		/* Re-schedule the LEB for erasure */
-		err1 = schedule_erase(ubi, e, vol_id, lnum, 0);
+		err1 = schedule_erase(ubi, e, vol_id, lnum, 0, false);
 		if (err1) {
 			err = err1;
 			goto out_ro;
@@ -1190,7 +1194,7 @@ out_ro:
  * in case of success, and a negative error code in case of failure.
  */
 int ubi_wl_put_peb(struct ubi_device *ubi, int vol_id, int lnum,
-		   int pnum, int torture)
+		   int pnum, int torture, bool nested)
 {
 	int err;
 	struct ubi_wl_entry *e;
@@ -1260,7 +1264,7 @@ retry:
 	}
 	spin_unlock(&ubi->wl_lock);
 
-	err = schedule_erase(ubi, e, vol_id, lnum, torture);
+	err = schedule_erase(ubi, e, vol_id, lnum, torture, nested);
 	if (err) {
 		spin_lock(&ubi->wl_lock);
 		wl_tree_add(e, &ubi->used);
@@ -1563,7 +1567,8 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		e->pnum = peb->pnum;
 		e->ec = peb->ec;
 		ubi->lookuptbl[e->pnum] = e;
-		if (schedule_erase(ubi, e, UBI_UNKNOWN, UBI_UNKNOWN, 0)) {
+		if (schedule_erase(ubi, e, UBI_UNKNOWN, UBI_UNKNOWN, 0,
+				   false)) {
 			wl_entry_destroy(ubi, e);
 			goto out_free;
 		}
@@ -1868,20 +1873,18 @@ static int produce_free_peb(struct ubi_device *ubi)
  * negative error code in case of failure.
  * Returns with ubi->fm_eba_sem held in read mode!
  */
-int ubi_wl_get_peb(struct ubi_device *ubi)
+int ubi_wl_get_peb(struct ubi_device *ubi, bool nested)
 {
-	int err;
+	int err = 0;
 	struct ubi_wl_entry *e;
 
 retry:
 	down_read(&ubi->fm_eba_sem);
 	spin_lock(&ubi->wl_lock);
-	if (!ubi->free.rb_node) {
+	if (!ubi->free.rb_node && !nested) {
 		if (ubi->works_count == 0) {
-			ubi_err(ubi, "no free eraseblocks");
 			ubi_assert(list_empty(&ubi->works));
-			spin_unlock(&ubi->wl_lock);
-			return -ENOSPC;
+			goto out;
 		}
 
 		err = produce_free_peb(ubi);
@@ -1894,9 +1897,17 @@ retry:
 		goto retry;
 
 	}
+
+out:
 	e = wl_get_wle(ubi);
-	prot_queue_add(ubi, e);
+	if (e)
+		prot_queue_add(ubi, e);
+	else
+		err = -ENOSPC;
 	spin_unlock(&ubi->wl_lock);
+
+	if (err)
+		return err;
 
 	err = ubi_self_check_all_ff(ubi, e->pnum, ubi->vid_hdr_aloffset,
 				    ubi->peb_size - ubi->vid_hdr_aloffset);
