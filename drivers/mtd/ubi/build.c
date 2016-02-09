@@ -368,7 +368,7 @@ static ssize_t dev_attribute_show(struct device *dev,
 	else if (attr == &dev_avail_eraseblocks)
 		ret = sprintf(buf, "%d\n",
 			      ubi->avail_pebs *
-			      ubi->lebs_per_consolidated_peb);
+			      ubi->lebs_per_cpeb);
 	else if (attr == &dev_total_eraseblocks)
 		ret = sprintf(buf, "%d\n", ubi->good_peb_count);
 	else if (attr == &dev_volumes_count)
@@ -650,7 +650,7 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 	ubi->consolidated_peb_size = ubi->mtd->erasesize;
 	ubi->peb_size   = ubi->consolidated_peb_size /
 			  mtd_pairing_groups_per_eb(ubi->mtd);
-	ubi->lebs_per_consolidated_peb = mtd_pairing_groups_per_eb(ubi->mtd);
+	ubi->lebs_per_cpeb = mtd_pairing_groups_per_eb(ubi->mtd);
 	ubi->peb_count  = mtd_div_by_eb(ubi->mtd->size, ubi->mtd);
 	ubi->flash_size = ubi->mtd->size;
 
@@ -822,7 +822,7 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
 				vol_id);
 	} else {
 		int avail_lebs = ubi->avail_pebs *
-				 ubi->lebs_per_consolidated_peb;
+				 ubi->lebs_per_cpeb;
 
 		desc.vol = vol;
 		err = ubi_resize_volume(&desc, old_reserved_lebs + avail_lebs);

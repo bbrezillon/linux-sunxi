@@ -353,17 +353,17 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 		return ERR_PTR(-ENOTSUPP);
 
 	spin_lock(&ubi->full_lock);
-	if (ubi->full_count < ubi->lebs_per_consolidated_peb)
+	if (ubi->full_count < ubi->lebs_per_cpeb)
 		err = -EAGAIN;
 	spin_unlock(&ubi->full_lock);
 	if (err)
 		return ERR_PTR(err);
 
-	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_consolidated_peb, GFP_KERNEL);
+	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_cpeb, GFP_KERNEL);
 	if (!clebs)
 		return ERR_PTR(-ENOMEM);
 
-	for (i = 0; i < ubi->lebs_per_consolidated_peb;) {
+	for (i = 0; i < ubi->lebs_per_cpeb;) {
 		bool retry = true;
 
 		spin_lock(&ubi->full_lock);
@@ -429,7 +429,7 @@ static bool consolidation_needed(struct ubi_device *ubi)
 	full_cnt = ubi->full_count;
 	spin_unlock(&ubi->full_lock);
 
-	if (full_cnt < ubi->lebs_per_consolidated_peb)
+	if (full_cnt < ubi->lebs_per_cpeb)
 		return false;
 
 	spin_lock(&ubi->wl_lock);
@@ -477,7 +477,7 @@ static bool ubi_eba_invalidate_leb(struct ubi_device *ubi, int pnum,
 	if (!clebs)
 		return true;
 
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		if (clebs[i].lnum == lnum && clebs[i].vol_id == vol_id) {
 		    clebs[i].lnum = -1;
 		    clebs[i].vol_id = -1;
@@ -593,13 +593,13 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (clebs) {
 		int lpos;
 
-		for (lpos = 0; lpos < ubi->lebs_per_consolidated_peb; lpos++) {
+		for (lpos = 0; lpos < ubi->lebs_per_cpeb; lpos++) {
 			if (clebs[lpos].vol_id == vol->vol_id &&
 			    clebs[lpos].lnum == lnum)
 				break;
 		}
 
-		if (lpos == ubi->lebs_per_consolidated_peb)
+		if (lpos == ubi->lebs_per_cpeb)
 			return -EINVAL;
 
 		loffs = ubi->leb_start + (lpos * ubi->leb_size);
@@ -1518,7 +1518,7 @@ static void consolidation_unlock(struct ubi_device *ubi,
 {
 	int i;
 
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
+	for (i = 0; i < ubi->lebs_per_cpeb; i++)
 		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
 }
 
@@ -1548,7 +1548,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	memset(ubi->peb_buf + ubi->vid_hdr_aloffset, 0, ubi->vid_hdr_alsize);
 	vid_hdrs = ubi->peb_buf + ubi->vid_hdr_aloffset + ubi->vid_hdr_shift;
 
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 		int spnum = vol->eba_tbl[lnum];
@@ -1587,7 +1587,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	 */
 	memset(ubi->peb_buf + offset, 0, ubi->consolidated_peb_size - offset);
 
-	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->lebs_per_consolidated_peb);
+	err = ubi_io_write_vid_hdrs(ubi, pnum, vid_hdrs, ubi->lebs_per_cpeb);
 	if (err) {
 		ubi_warn(ubi, "failed to write VID headers to PEB %d",
 			 pnum);
@@ -1604,7 +1604,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	}
 
 	ubi->consolidated[pnum] = clebs;
-	for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id];
 		int opnum;
@@ -1619,7 +1619,7 @@ out_unlock_fm_eba:
 out:
 	mutex_unlock(&ubi->buf_mutex);
 	if (err) {
-		for (i = 0; i < ubi->lebs_per_consolidated_peb; i++)
+		for (i = 0; i < ubi->lebs_per_cpeb; i++)
 			add_full_leb(ubi, clebs[i].vol_id, clebs[i].lnum);
 
 		ubi_wl_put_peb(ubi, UBI_UNKNOWN, UBI_UNKNOWN, pnum, 0, true);
@@ -1816,8 +1816,8 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	ubi->consolidation_work.func = consolidation_worker;
 	INIT_LIST_HEAD(&ubi->consolidation_work.list);
 	ubi->consolidation_threshold = (ubi->avail_pebs + ubi->rsvd_pebs) / 3;
-	if (ubi->consolidation_threshold < ubi->lebs_per_consolidated_peb)
-		ubi->consolidation_threshold = ubi->lebs_per_consolidated_peb;
+	if (ubi->consolidation_threshold < ubi->lebs_per_cpeb)
+		ubi->consolidation_threshold = ubi->lebs_per_cpeb;
 
 	ubi->global_sqnum = ai->max_sqnum + 1;
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
@@ -1860,7 +1860,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		}
 	}
 
-	if (ubi->lebs_per_consolidated_peb > 1)
+	if (ubi->lebs_per_cpeb > 1)
 		eba_rsvd += EBA_CONSO_RESERVED_PEBS;
 
 	if (ubi->avail_pebs < eba_rsvd) {

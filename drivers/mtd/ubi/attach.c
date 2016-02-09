@@ -937,7 +937,7 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	}
 
 	/* OK, we've done with the EC header, let's look at the VID header */
-	nvidh = ubi->lebs_per_consolidated_peb;
+	nvidh = ubi->lebs_per_cpeb;
 	err = ubi_io_read_vid_hdrs(ubi, pnum, vidh, &nvidh, 0);
 	if (err < 0)
 		return err;

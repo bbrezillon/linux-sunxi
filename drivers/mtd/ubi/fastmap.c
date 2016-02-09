@@ -516,7 +516,7 @@ static int scan_pool(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		}
 
 		/* TODO: support consolidate PEBs */
-		nvid = ubi->lebs_per_consolidated_peb;
+		nvid = ubi->lebs_per_cpeb;
 		err = ubi_io_read_vid_hdrs(ubi, pnum, vh, &nvid, 0);
 		if (err == UBI_IO_FF || err == UBI_IO_FF_BITFLIPS) {
 			unsigned long long ec = be64_to_cpu(ech->ec);
@@ -1337,7 +1337,7 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 
 				fcleb = &fconso->lebs[nconso];
 				fcleb->lnum = cpu_to_be32(j);
-				for (k = 0; k < ubi->lebs_per_consolidated_peb;
+				for (k = 0; k < ubi->lebs_per_cpeb;
 				     k++) {
 					if (cleb[k].vol_id != vol->vol_id ||
 					    cleb[k].lnum != j)
@@ -1347,7 +1347,7 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 					break;
 				}
 
-				if (k > ubi->lebs_per_consolidated_peb) {
+				if (k > ubi->lebs_per_cpeb) {
 					ret = -EAGAIN;
 					goto out_kfree;
 				}

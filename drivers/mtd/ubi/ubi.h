@@ -615,7 +615,7 @@ struct ubi_device {
 	unsigned long long global_sqnum;
 	spinlock_t ltree_lock;
 	struct rb_root ltree;
-	int lebs_per_consolidated_peb;
+	int lebs_per_cpeb;
 	struct ubi_leb_desc **consolidated;
 	spinlock_t full_lock;
 	struct list_head full;
@@ -1039,21 +1039,6 @@ static inline int ubiblock_remove(struct ubi_volume_info *vi)
 	     rb;                                                             \
 	     rb = rb_next(rb),                                               \
 	     pos = (rb ? container_of(rb, typeof(*pos), member) : NULL))
-
-///*
-// * ubi_move_aeb_to_list - move a PEB from the volume tree to a list.
-// *
-// * @av: volume attaching information
-// * @aeb: attaching eraseblock information
-// * @list: the list to move to
-// */
-//static inline void ubi_move_aeb_to_list(struct ubi_ainf_volume *av,
-//					 struct ubi_ainf_peb *aeb,
-//					 struct list_head *list)
-//{
-//		rb_erase(&aeb->u.rb, &av->root);
-//		list_add_tail(&aeb->u.list, list);
-//}
 
 /**
  * ubi_zalloc_vid_hdr - allocate a volume identifier header object.

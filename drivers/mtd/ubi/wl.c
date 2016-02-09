@@ -1542,12 +1542,13 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	if (!ubi->lookuptbl)
 		return err;
 
-	/* FIXME: make this creation optional. */
-	ubi->consolidated = kzalloc(ubi->peb_count * sizeof(void *),
-				    GFP_KERNEL);
-	if (!ubi->consolidated) {
-		kfree(ubi->lookuptbl);
-		return err;
+	if (ubi->lebs_per_cpeb > 1) {
+		ubi->consolidated = kzalloc(ubi->peb_count * sizeof(void *),
+					    GFP_KERNEL);
+		if (!ubi->consolidated) {
+			kfree(ubi->lookuptbl);
+			return err;
+		}
 	}
 
 	for (i = 0; i < UBI_PROT_QUEUE_LEN; i++)
@@ -1622,12 +1623,12 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			int i;
 
 			clebs = kmalloc(sizeof(*clebs) *
-					ubi->lebs_per_consolidated_peb,
+					ubi->lebs_per_cpeb,
 					GFP_KERNEL);
 			if (!clebs)
 				goto out_free;
 
-			for (i = 0; i < ubi->lebs_per_consolidated_peb; i++) {
+			for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 				clebs[i].lnum = -1;
 				clebs[i].vol_id = -1;
 			}
