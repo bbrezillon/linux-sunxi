@@ -425,6 +425,9 @@ static bool consolidation_needed(struct ubi_device *ubi)
 {
 	int full_cnt, free_cnt;
 
+	if (!ubi->consolidated)
+		return false;
+
 	spin_lock(&ubi->full_lock);
 	full_cnt = ubi->full_count;
 	spin_unlock(&ubi->full_lock);
@@ -507,7 +510,7 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		      int lnum)
 {
 	int err, pnum, vol_id = vol->vol_id;
-	bool release_peb = true;
+	bool release_peb = false;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -1527,8 +1530,6 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	int i, pnum, offset = ubi->leb_start, err = 0;
 	struct ubi_vid_hdr *vid_hdrs;
 	struct ubi_leb_desc *clebs;
-
-	ubi_assert(ubi->consolidated);
 
 	if (!consolidation_needed(ubi))
 		return 0;
