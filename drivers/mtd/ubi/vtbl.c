@@ -333,11 +333,14 @@ retry:
 	if (err)
 		goto write_error;
 
-	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum,
-				ubi->leb_size - ubi->min_io_size,
-				ubi->min_io_size);
-	if (err)
-		goto write_error;
+	if (ubi->vtbl_size < ubi->leb_size) {
+		err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum,
+					ubi->leb_size - ubi->min_io_size,
+					ubi->min_io_size);
+		if (err)
+			goto write_error;
+	}
+
 	/*
 	 * And add it to the attaching information. Don't delete the old version
 	 * of this LEB as it will be deleted and freed in 'ubi_add_to_av()'.
