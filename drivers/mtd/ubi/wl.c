@@ -1643,9 +1643,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		ubi_rb_for_each_entry(rb2, leb, &av->root, rb) {
 			cond_resched();
 
-			clebs = ubi->consolidated[leb->peb->pnum];
-			if (clebs)
-				clebs[leb->peb_pos] = leb->desc;
+			if (ubi->lebs_per_cpeb > 1) {
+				clebs = ubi->consolidated[leb->peb->pnum];
+				if (clebs)
+					clebs[leb->peb_pos] = leb->desc;
+			}
 		}
 	}
 
