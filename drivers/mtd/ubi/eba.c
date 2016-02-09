@@ -1615,6 +1615,10 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
 		int opnum;
 
+		//XXX volume vanished
+		if (!vol)
+			continue;
+
 		opnum = vol->eba_tbl[lnum];
 		vol->eba_tbl[lnum] = pnum;
 		ubi_wl_put_peb(ubi, vol_id, lnum, opnum, 0, true);
