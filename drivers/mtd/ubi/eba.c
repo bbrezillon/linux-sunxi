@@ -1557,9 +1557,15 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
 		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
-		int spnum = vol->eba_tbl[lnum];
 		void *buf = ubi->peb_buf + offset;
 		u32 crc;
+		int spnum;
+
+		//XXX volume vanished
+		if (!vol)
+			continue;
+
+		spnum = vol->eba_tbl[lnum];
 
 		ubi_assert(!ubi->consolidated[spnum]);
 
