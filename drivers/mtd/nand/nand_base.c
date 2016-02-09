@@ -3688,6 +3688,7 @@ static void nand_decode_id(struct mtd_info *mtd, struct nand_chip *chip,
 {
 	int maf_id = id_data[0];
 
+	mtd->pairing = type->pairing;
 	mtd->erasesize = type->erasesize;
 	mtd->writesize = type->pagesize;
 	mtd->oobsize = mtd->writesize / 32;

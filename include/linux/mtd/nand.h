@@ -758,6 +758,10 @@ struct nand_chip {
 	{ .name = (nm), {{ .dev_id = (devid) }}, .pagesize = 512, \
 	  .chipsize = (chipsz), .erasesize = (erasesz), .options = (opts) }
 
+#define LEGACY_ID_NAND2(nm, devid, chipsz, erasesz, opts, pi)          \
+	{ .name = (nm), {{ .dev_id = (devid) }}, .pagesize = 512, \
+	  .chipsize = (chipsz), .erasesize = (erasesz), .options = (opts), .pairing = (pi) }
+
 /*
  * A helper for defining newer chips which report their page size and
  * eraseblock size via the extended ID bytes.
