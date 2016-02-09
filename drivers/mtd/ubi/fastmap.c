@@ -143,7 +143,7 @@ static int add_aeb(struct ubi_attach_info *ai, struct list_head *list,
 {
 	struct ubi_ainf_peb *aeb;
 
-	aeb = kmem_cache_zalloc(ai->apeb_slab_cache, GFP_KERNEL);
+	aeb = kmem_cache_alloc(ai->apeb_slab_cache, GFP_KERNEL);
 	if (!aeb)
 		return -ENOMEM;
 
@@ -331,7 +331,7 @@ static int update_vol(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return 0;
 	}
 	/* This LEB is new, let's add it to the volume */
-	aeb = kmem_cache_zalloc(ai->aleb_slab_cache, GFP_KERNEL);
+	aeb = kmem_cache_alloc(ai->aleb_slab_cache, GFP_KERNEL);
 	if (!aeb)
 		return -ENOMEM;
 
@@ -536,8 +536,8 @@ static int scan_pool(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			if (err == UBI_IO_BITFLIPS)
 				scrub = 1;
 
-			new_aeb = kmem_cache_zalloc(ai->apeb_slab_cache,
-						    GFP_KERNEL);
+			new_aeb = kmem_cache_alloc(ai->apeb_slab_cache,
+						   GFP_KERNEL);
 			if (!new_aeb) {
 				ret = -ENOMEM;
 				goto out;
@@ -832,8 +832,7 @@ static int ubi_attach_fastmap(struct ubi_device *ubi,
 				goto fail_bad;
 			}
 
-			leb = kmem_cache_zalloc(ai->aleb_slab_cache,
-						GFP_KERNEL);
+			leb = kmem_cache_alloc(ai->aleb_slab_cache, GFP_KERNEL);
 			if (!leb)
 				goto fail_bad;
 
@@ -1094,7 +1093,7 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	for (i = 0; i < used_blocks; i++) {
 		struct ubi_wl_entry *e;
 
-		e = kmem_cache_zalloc(ubi_wl_entry_slab, GFP_KERNEL);
+		e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
 		if (!e) {
 			while (i--)
 				kfree(fm->e[i]);

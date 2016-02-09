@@ -147,7 +147,7 @@ static int add_to_list(struct ubi_attach_info *ai, int pnum, int ec,
 {
 	struct ubi_ainf_peb *aeb;
 
-	aeb = kmem_cache_zalloc(ai->apeb_slab_cache, GFP_KERNEL);
+	aeb = kmem_cache_alloc(ai->apeb_slab_cache, GFP_KERNEL);
 	if (!aeb)
 		return -ENOMEM;
 
@@ -177,7 +177,7 @@ static int add_corrupted(struct ubi_attach_info *ai, int pnum, int ec)
 
 	dbg_bld("add to corrupted: PEB %d, EC %d", pnum, ec);
 
-	aeb = kmem_cache_zalloc(ai->apeb_slab_cache, GFP_KERNEL);
+	aeb = kmem_cache_alloc(ai->apeb_slab_cache, GFP_KERNEL);
 	if (!aeb)
 		return -ENOMEM;
 
@@ -589,7 +589,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	if (err)
 		return err;
 
-	leb = kmem_cache_zalloc(ai->aleb_slab_cache, GFP_KERNEL);
+	leb = kmem_cache_alloc(ai->aleb_slab_cache, GFP_KERNEL);
 	if (!leb)
 		return -ENOMEM;
 
