@@ -1604,6 +1604,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	}
 
 	list_for_each_entry(peb, &ai->used, list) {
+		cond_resched();
+
+		if (ubi->lookuptbl[peb->pnum])
+			continue;
+
 		e = kmem_cache_zalloc(ubi_wl_entry_slab, GFP_KERNEL);
 		if (!e)
 			goto out_free;
