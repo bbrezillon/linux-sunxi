@@ -339,29 +339,20 @@ static int add_full_leb(struct ubi_device *ubi, int vol_id, int lnum)
 	return 0;
 }
 
-static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
+static int find_consolidable_lebs(struct ubi_device *ubi,
+				  struct ubi_leb_desc *clebs,
+				  struct ubi_volume **vols)
 {
-	struct ubi_leb_desc *clebs;
 	struct ubi_full_leb *fleb;
 	LIST_HEAD(full);
 	int i, err = 0;
-	/*
-	 * We don't track full LEBs if we don't need to (which is the case
-	 * UBI does not need or does not support LEB consolidation).
-	 */
-	if (!ubi->consolidated)
-		return ERR_PTR(-ENOTSUPP);
 
 	spin_lock(&ubi->full_lock);
 	if (ubi->full_count < ubi->lebs_per_cpeb)
 		err = -EAGAIN;
 	spin_unlock(&ubi->full_lock);
 	if (err)
-		return ERR_PTR(err);
-
-	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_cpeb, GFP_KERNEL);
-	if (!clebs)
-		return ERR_PTR(-ENOMEM);
+		return err;
 
 	for (i = 0; i < ubi->lebs_per_cpeb;) {
 		bool retry = true;
@@ -377,9 +368,17 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 			goto err;
 		}
 
-		err = leb_read_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
+		err = leb_write_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
 		if (err)
 			goto err;
+
+		spin_lock(&ubi->volumes_lock);
+		vols[i] = ubi->volumes[vol_id2idx(ubi, clebs[i].vol_id)];
+		spin_unlock(&ubi->volumes_lock);
+		if (!vols[i]) {
+			leb_write_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+			continue;
+		}
 
 		spin_lock(&ubi->full_lock);
 		if (fleb == list_first_entry_or_null(&ubi->full,
@@ -393,7 +392,7 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 		spin_unlock(&ubi->full_lock);
 
 		if (retry) {
-			leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+			leb_write_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
 			continue;
 		}
 
@@ -407,18 +406,18 @@ static struct ubi_leb_desc *find_consolidable_lebs(struct ubi_device *ubi)
 		kfree(fleb);
 	}
 
-	return clebs;
+	return 0;
 
 err:
 	spin_lock(&ubi->full_lock);
-	for (i--; i >= 0; i--)
-		leb_read_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
 	list_splice(&full, &ubi->full);
 	ubi->full_count += i;
 	spin_unlock(&ubi->full_lock);
-	kfree(clebs);
 
-	return ERR_PTR(err);
+	for (i--; i >= 0; i--)
+		leb_write_unlock(ubi, clebs[i].vol_id, clebs[i].lnum);
+
+	return err;
 }
 
 static bool consolidation_possible(struct ubi_device *ubi)
@@ -1535,13 +1534,24 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	int i, pnum, offset = ubi->leb_start, err = 0;
 	struct ubi_vid_hdr *vid_hdrs;
 	struct ubi_leb_desc *clebs;
+	struct ubi_volume **vols;
 
 	if (!consolidation_needed(ubi))
 		return 0;
 
-	clebs = find_consolidable_lebs(ubi);
-	if (IS_ERR(clebs))
-		return PTR_ERR(clebs);
+	vols = kzalloc(sizeof(*vols) * ubi->lebs_per_cpeb, GFP_KERNEL);
+	if (!vols)
+		return -ENOMEM;
+
+	clebs = kzalloc(sizeof(*clebs) * ubi->lebs_per_cpeb, GFP_KERNEL);
+	if (!clebs) {
+		err = -ENOMEM;
+		goto out_free_vols;
+	}
+
+	err = find_consolidable_lebs(ubi, clebs, vols);
+	if (err)
+		goto out_free_clebs;
 
 	pnum = ubi_wl_get_peb(ubi, true);
 	if (pnum < 0) {
@@ -1556,9 +1566,9 @@ static int consolidate_lebs(struct ubi_device *ubi)
 
 	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
-		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
-		int spnum = vol->eba_tbl[lnum];
 		void *buf = ubi->peb_buf + offset;
+		struct ubi_volume *vol = vols[i];
+		int spnum = vol->eba_tbl[lnum];
 		u32 crc;
 
 		ubi_assert(!ubi->consolidated[spnum]);
@@ -1567,22 +1577,21 @@ static int consolidate_lebs(struct ubi_device *ubi)
 		if (err)
 			goto out;
 
-		vid_hdrs[i].sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
-		vid_hdrs[i].vol_id = cpu_to_be32(vol_id);
-		vid_hdrs[i].lnum = cpu_to_be32(lnum);
-		vid_hdrs[i].compat = ubi_get_compat(ubi, vol_id);
 		vid_hdrs[i].data_pad = cpu_to_be32(vol->data_pad);
-		crc = crc32(UBI_CRC32_INIT, buf, ubi->leb_size);
 		if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
 			vid_hdrs[i].vol_type = UBI_VID_DYNAMIC;
 		} else {
 			vid_hdrs[i].vol_type = UBI_VID_STATIC;
 			vid_hdrs[i].used_ebs = cpu_to_be32(vol->used_ebs);
 		}
+		vid_hdrs[i].sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
+		vid_hdrs[i].vol_id = cpu_to_be32(vol_id);
+		vid_hdrs[i].lnum = cpu_to_be32(lnum);
+		vid_hdrs[i].compat = ubi_get_compat(ubi, vol_id);
 		vid_hdrs[i].data_size = cpu_to_be32(ubi->leb_size);
 		vid_hdrs[i].copy_flag = 1;
+		crc = crc32(UBI_CRC32_INIT, buf, ubi->leb_size);
 		vid_hdrs[i].data_crc = cpu_to_be32(crc);
-
 		offset += ubi->leb_size;
 	}
 
@@ -1612,7 +1621,7 @@ static int consolidate_lebs(struct ubi_device *ubi)
 	ubi->consolidated[pnum] = clebs;
 	for (i = 0; i < ubi->lebs_per_cpeb; i++) {
 		int vol_id = clebs[i].vol_id, lnum = clebs[i].lnum;
-		struct ubi_volume *vol = ubi->volumes[vol_id2idx(ubi, vol_id)];
+		struct ubi_volume *vol = vols[i];
 		int opnum;
 
 		opnum = vol->eba_tbl[lnum];
@@ -1633,6 +1642,13 @@ out:
 
 out_unlock_lebs:
 	consolidation_unlock(ubi, clebs);
+
+out_free_clebs:
+	if (err)
+		kfree(clebs);
+
+out_free_vols:
+	kfree(vols);
 
 	return err;
 }
