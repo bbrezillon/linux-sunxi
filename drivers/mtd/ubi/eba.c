@@ -356,17 +356,23 @@ static int find_consolidable_lebs(struct ubi_device *ubi,
 
 	for (i = 0; i < ubi->lebs_per_cpeb;) {
 		bool retry = true;
+		int j;
 
 		spin_lock(&ubi->full_lock);
 		fleb = list_first_entry_or_null(&ubi->full,
 						struct ubi_full_leb, node);
-		clebs[i] = fleb->desc;
+		if (fleb)
+			clebs[i] = fleb->desc;
 		spin_unlock(&ubi->full_lock);
 
 		if (!fleb) {
 			err = -EAGAIN;
 			goto err;
 		}
+
+		for (j = i - 1; j >= 0; j--)
+			BUG_ON(clebs[i].lnum == clebs[j].lnum &&
+			       clebs[i].vol_id == clebs[j].vol_id);
 
 		err = leb_write_lock(ubi, clebs[i].vol_id, clebs[i].lnum);
 		if (err)
