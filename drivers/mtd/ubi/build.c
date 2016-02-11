@@ -569,7 +569,7 @@ void ubi_free_internal_volumes(struct ubi_device *ubi)
 
 	for (i = ubi->vtbl_slots;
 	     i < ubi->vtbl_slots + UBI_INT_VOL_COUNT; i++) {
-		kfree(ubi->volumes[i]->eba_tbl);
+		ubi_eba_vol_cleanup(ubi->volumes[i]);
 		kfree(ubi->volumes[i]);
 	}
 }

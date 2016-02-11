@@ -769,6 +769,20 @@ struct ubi_work {
 	int anchor;
 };
 
+/**
+ * struct ubi_eba_vol_upd_req - UBI EBA update request.
+ * @reserved_pebs: new number of PEBs reserved for this volume
+ * @eba_tbl: the new EBA table to be associated to volume
+ *
+ * This structure is here to hide EBA internals. When a user wants to
+ * resize a volume it will use this structure with the
+ * ubi_eba_vol_update_xxx() functions.
+ */
+struct ubi_eba_vol_upd_req {
+	int reserved_pebs;
+	int *eba_tbl;
+};
+
 #include "debug.h"
 
 extern struct kmem_cache *ubi_wl_entry_slab;
@@ -824,6 +838,16 @@ void ubi_calculate_reserved(struct ubi_device *ubi);
 int ubi_check_pattern(const void *buf, uint8_t patt, int size);
 
 /* eba.c */
+int ubi_eba_vol_init(struct ubi_volume *vol);
+void ubi_eba_vol_cleanup(struct ubi_volume *vol);
+int ubi_eba_vol_update_start(struct ubi_eba_vol_upd_req *req, int rsvd_pebs);
+void ubi_eba_vol_update_apply(struct ubi_volume *vol,
+			      struct ubi_eba_vol_upd_req *req);
+void ubi_eba_vol_update_revert(struct ubi_volume *vol,
+			       struct ubi_eba_vol_upd_req *req);
+void ubi_eba_vol_update_finish(struct ubi_eba_vol_upd_req *req);
+int ubi_eba_get_pnum(struct ubi_volume *vol, int lnum);
+int ubi_eba_set_pnum(struct ubi_volume *vol, int lnum, int pnum);
 int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		      int lnum);
 int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,

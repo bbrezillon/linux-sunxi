@@ -312,6 +312,153 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 }
 
 /**
+ * ubi_eba_get_pnum - get the PEB number associated to a specific LEB
+ * @vol: volume description object
+ * @lnum: logical eraseblock number
+ */
+int ubi_eba_get_pnum(struct ubi_volume *vol, int lnum)
+{
+	ubi_assert(lnum >= 0 && lnum < vol->reserved_pebs);
+
+	return vol->eba_tbl[lnum];
+}
+
+/**
+ * ubi_eba_set_pnum - associate a new PEB to a specific LEB
+ * @vol: volume description object
+ * @lnum: logical eraseblock number
+ * @pnum: physical eraseblock number
+ */
+int ubi_eba_set_pnum(struct ubi_volume *vol, int lnum, int pnum)
+{
+	ubi_assert(lnum >= 0 && lnum < vol->reserved_pebs);
+
+	vol->eba_tbl[lnum] = pnum;
+
+	return 0;
+}
+
+/**
+ * ubi_eba_vol_init - initialize the EBA info in a UBI volume
+ * @vol: volume description object
+ *
+ * This function allocates all the resources associated to EBA.
+ */
+int ubi_eba_vol_init(struct ubi_volume *vol)
+{
+	int i;
+
+	ubi_assert(!vol->eba_tbl);
+
+	vol->eba_tbl = kmalloc(vol->reserved_pebs * sizeof(int), GFP_KERNEL);
+	if (!vol->eba_tbl)
+		return -ENOMEM;
+
+	for (i = 0; i < vol->reserved_pebs; i++)
+		vol->eba_tbl[i] = UBI_LEB_UNMAPPED;
+
+	return 0;
+}
+
+/**
+ * ubi_eba_vol_cleanup - cleanup all EBA related structures
+ * @vol: volume description object
+ *
+ * This function cleans up all data allocated by ubi_eba_vol_init().
+ */
+void ubi_eba_vol_cleanup(struct ubi_volume *vol)
+{
+	ubi_assert(vol->eba_tbl);
+
+	kfree(vol->eba_tbl);
+	vol->eba_tbl = NULL;
+}
+
+/**
+ * ubi_eba_vol_update_start - start a volume update request
+ * @req: the update request object
+ * @rsvd_pebs: new number of reserved PEBs for this volume
+ *
+ * This function allocates all the resources needed to atomically update
+ * the EBA table.
+ */
+int ubi_eba_vol_update_start(struct ubi_eba_vol_upd_req *req, int rsvd_pebs)
+{
+	int i;
+
+	req->eba_tbl = kmalloc(rsvd_pebs * sizeof(int), GFP_KERNEL);
+	if (!req->eba_tbl)
+		return -ENOMEM;
+
+	for (i = 0; i < rsvd_pebs; i++)
+		req->eba_tbl[i] = UBI_LEB_UNMAPPED;
+
+	req->reserved_pebs = rsvd_pebs;
+
+	return 0;
+}
+
+/**
+ * ubi_eba_vol_update_apply - apply a volume update request
+ * @vol: volume description object
+ * @req: the update request object
+ *
+ * This function apply a new EBA table, keeping the existing lnum -> pnum
+ * association.
+ */
+void ubi_eba_vol_update_apply(struct ubi_volume *vol,
+			      struct ubi_eba_vol_upd_req *req)
+{
+	int i, *old_eba_tbl = NULL;
+
+	i = min(req->reserved_pebs, vol->reserved_pebs);
+	memcpy(req->eba_tbl, vol->eba_tbl, i);
+	for (; i < req->reserved_pebs; i++)
+		req->eba_tbl[i] = UBI_LEB_UNMAPPED;
+	old_eba_tbl = vol->eba_tbl;
+	i = vol->reserved_pebs;
+	vol->reserved_pebs = req->reserved_pebs;
+	vol->eba_tbl = req->eba_tbl;
+
+	req->eba_tbl = old_eba_tbl;
+	req->reserved_pebs = i;
+}
+
+/**
+ * ubi_eba_vol_update_revert - revert a previously applied update request
+ * @vol: volume description object
+ * @req: the update request object
+ *
+ * This function revert a volume update request previously applied with
+ * ubi_eba_vol_update_apply().
+ * It should be called if your volume update failed for any reason after
+ * you applied the new EBA table.
+ */
+void ubi_eba_vol_update_revert(struct ubi_volume *vol,
+			       struct ubi_eba_vol_upd_req *req)
+{
+	int *new_eba_tbl;
+
+	new_eba_tbl = vol->eba_tbl;
+	vol->reserved_pebs = req->reserved_pebs;
+	vol->eba_tbl = req->eba_tbl;
+
+	kfree(new_eba_tbl);
+}
+
+/**
+ * ubi_eba_vol_update_finish - finish a volume update request
+ * @req: the update request object
+ *
+ * This function release all the resources associated to the
+ * volume update request (allocated by ubi_eba_vol_update_start()).
+ */
+void ubi_eba_vol_update_finish(struct ubi_eba_vol_upd_req *req)
+{
+	kfree(req->eba_tbl);
+}
+
+/**
  * ubi_eba_unmap_leb - un-map logical eraseblock.
  * @ubi: UBI device description object
  * @vol: volume description object
@@ -333,7 +480,7 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl[lnum];
+	pnum = ubi_eba_get_pnum(vol, lnum);
 	if (pnum < 0)
 		/* This logical eraseblock is already unmapped */
 		goto out_unlock;
@@ -341,7 +488,7 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, pnum);
 
 	down_read(&ubi->fm_eba_sem);
-	vol->eba_tbl[lnum] = UBI_LEB_UNMAPPED;
+	ubi_eba_set_pnum(vol, lnum, UBI_LEB_UNMAPPED);
 	up_read(&ubi->fm_eba_sem);
 	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
 
@@ -380,7 +527,7 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl[lnum];
+	pnum = ubi_eba_get_pnum(vol, lnum);
 	if (pnum < 0) {
 		/*
 		 * The logical eraseblock is not mapped, fill the whole buffer
@@ -614,7 +761,7 @@ retry:
 	mutex_unlock(&ubi->buf_mutex);
 	ubi_free_vid_hdr(ubi, vid_hdr);
 
-	vol->eba_tbl[lnum] = new_pnum;
+	ubi_eba_set_pnum(vol, lnum, new_pnum);
 	up_read(&ubi->fm_eba_sem);
 	ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
 
@@ -670,7 +817,7 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl[lnum];
+	pnum = ubi_eba_get_pnum(vol, lnum);
 	if (pnum >= 0) {
 		dbg_eba("write %d bytes at offset %d of LEB %d:%d, PEB %d",
 			len, offset, vol_id, lnum, pnum);
@@ -735,7 +882,7 @@ retry:
 		}
 	}
 
-	vol->eba_tbl[lnum] = pnum;
+	ubi_eba_set_pnum(vol, lnum, pnum);
 	up_read(&ubi->fm_eba_sem);
 
 	leb_write_unlock(ubi, vol_id, lnum);
@@ -856,8 +1003,8 @@ retry:
 		goto write_error;
 	}
 
-	ubi_assert(vol->eba_tbl[lnum] < 0);
-	vol->eba_tbl[lnum] = pnum;
+	ubi_assert(ubi_eba_get_pnum(vol, lnum) < 0);
+	ubi_eba_set_pnum(vol, lnum, pnum);
 	up_read(&ubi->fm_eba_sem);
 
 	leb_write_unlock(ubi, vol_id, lnum);
@@ -958,7 +1105,7 @@ retry:
 	}
 
 	dbg_eba("change LEB %d:%d, PEB %d, write VID hdr to PEB %d",
-		vol_id, lnum, vol->eba_tbl[lnum], pnum);
+		vol_id, lnum, ubi_eba_get_pnum(vol, lnum), pnum);
 
 	err = ubi_io_write_vid_hdr(ubi, pnum, vid_hdr);
 	if (err) {
@@ -976,8 +1123,8 @@ retry:
 		goto write_error;
 	}
 
-	old_pnum = vol->eba_tbl[lnum];
-	vol->eba_tbl[lnum] = pnum;
+	old_pnum = ubi_eba_get_pnum(vol, lnum);
+	ubi_eba_set_pnum(vol, lnum, pnum);
 	up_read(&ubi->fm_eba_sem);
 
 	if (old_pnum >= 0) {
@@ -1117,9 +1264,9 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	 * probably waiting on @ubi->move_mutex. No need to continue the work,
 	 * cancel it.
 	 */
-	if (vol->eba_tbl[lnum] != from) {
+	if (ubi_eba_get_pnum(vol, lnum) != from) {
 		dbg_wl("LEB %d:%d is no longer mapped to PEB %d, mapped to PEB %d, cancel",
-		       vol_id, lnum, from, vol->eba_tbl[lnum]);
+		       vol_id, lnum, from, ubi_eba_get_pnum(vol, lnum));
 		err = MOVE_CANCEL_RACE;
 		goto out_unlock_leb;
 	}
@@ -1230,9 +1377,9 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		}
 	}
 
-	ubi_assert(vol->eba_tbl[lnum] == from);
+	ubi_assert(ubi_eba_get_pnum(vol, lnum) == from);
 	down_read(&ubi->fm_eba_sem);
-	vol->eba_tbl[lnum] = to;
+	ubi_eba_set_pnum(vol, lnum, to);
 	up_read(&ubi->fm_eba_sem);
 
 out_unlock_buf:
@@ -1411,15 +1558,9 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 
 		cond_resched();
 
-		vol->eba_tbl = kmalloc(vol->reserved_pebs * sizeof(int),
-				       GFP_KERNEL);
-		if (!vol->eba_tbl) {
-			err = -ENOMEM;
+		err = ubi_eba_vol_init(vol);
+		if (err)
 			goto out_free;
-		}
-
-		for (j = 0; j < vol->reserved_pebs; j++)
-			vol->eba_tbl[j] = UBI_LEB_UNMAPPED;
 
 		av = ubi_find_av(ai, idx2vol_id(ubi, i));
 		if (!av)
@@ -1433,7 +1574,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				 */
 				ubi_move_aeb_to_list(av, aeb, &ai->erase);
 			else
-				vol->eba_tbl[aeb->lnum] = aeb->pnum;
+				ubi_eba_set_pnum(vol, aeb->lnum, aeb->pnum);
 		}
 	}
 
@@ -1470,8 +1611,8 @@ out_free:
 	for (i = 0; i < num_volumes; i++) {
 		if (!ubi->volumes[i])
 			continue;
-		kfree(ubi->volumes[i]->eba_tbl);
-		ubi->volumes[i]->eba_tbl = NULL;
+
+		ubi_eba_vol_cleanup(ubi->volumes[i]);
 	}
 	return err;
 }
