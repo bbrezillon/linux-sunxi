@@ -163,16 +163,6 @@ enum {
 };
 
 /**
- * struct ubi_peb_info - PEB information
- * @ec: erase counter
- * @pnum: physical eraseblock number
- */
-struct ubi_peb_info {
-	int ec;
-	int lnum;
-};
-
-/**
  * struct ubi_wl_entry - wear-leveling entry.
  * @u.rb: link in the corresponding (free/used) RB-tree
  * @u.list: link in the protection queue
@@ -190,29 +180,6 @@ struct ubi_wl_entry {
 	} u;
 	int ec;
 	int pnum;
-};
-
-/**
- * struct ubi_leb_uid - LEB unique identfier within a UBI device
- * @vol_id: volume ID of the locked logical eraseblock
- * @lnum: locked logical eraseblock number
- *
- * This data structure is representing a unique LEB identifier.
- * Unicity is only guaranteed withing a given UBI device.
- */
-struct ubi_leb_uid {
-	int vol_id;
-	int lnum;
-};
-
-/**
- * struct ubi_leb_uid - LEB unique identfier within a UBI device
- * @id: locked logical eraseblock ID
- * @vol_type: volume type
- */
-struct ubi_leb_info {
-	struct ubi_leb_uid id;
-	int vol_type;
 };
 
 /**
