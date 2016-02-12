@@ -635,6 +635,30 @@ void ubi_free_volume(struct ubi_device *ubi, struct ubi_volume *vol)
 	ubi_unregister_volume(vol);
 }
 
+struct ubi_volume *ubi_get_volume_by_idx(struct ubi_device *ubi, int idx)
+{
+	struct ubi_volume *vol;
+
+	spin_lock(&ubi->volumes_lock);
+	vol = ubi->volumes[idx];
+	if (vol)
+		get_device(&vol->dev);
+	spin_unlock(&ubi->volumes_lock);
+
+	return vol;
+}
+
+struct ubi_volume *ubi_get_volume_by_vol_id(struct ubi_device *ubi, int vol_id)
+{
+	return ubi_get_volume_by_idx(ubi, vol_id2idx(ubi, vol_id));
+}
+
+void ubi_put_volume(struct ubi_volume *vol)
+{
+	if (vol)
+		put_device(&vol->dev);
+}
+
 /**
  * self_check_volume - check volume information.
  * @ubi: UBI device description object

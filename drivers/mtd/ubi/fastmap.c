@@ -1241,7 +1241,7 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 	fmh->erase_peb_count = cpu_to_be32(erase_peb_count);
 
 	for (i = 0; i < UBI_MAX_VOLUMES + UBI_INT_VOL_COUNT; i++) {
-		vol = ubi->volumes[i];
+		vol = ubi_get_volume_by_idx(ubi, i);
 
 		if (!vol)
 			continue;
@@ -1271,6 +1271,7 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 
 		feba->reserved_pebs = cpu_to_be32(j);
 		feba->magic = cpu_to_be32(UBI_FM_EBA_MAGIC);
+		ubi_put_volume(vol);
 	}
 	fmh->vol_count = cpu_to_be32(vol_count);
 	fmh->bad_peb_count = cpu_to_be32(ubi->bad_peb_count);

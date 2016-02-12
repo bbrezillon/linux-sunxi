@@ -201,21 +201,20 @@ int ubi_notify_all(struct ubi_device *ubi, int ntype, struct notifier_block *nb)
 
 	mutex_lock(&ubi->device_mutex);
 	for (i = 0; i < ubi->vtbl_slots; i++) {
-		/*
-		 * Since the @ubi->device is locked, and we are not going to
-		 * change @ubi->volumes, we do not have to lock
-		 * @ubi->volumes_lock.
-		 */
-		if (!ubi->volumes[i])
+		struct ubi_volume *vol;
+
+		vol = ubi_get_volume_by_idx(ubi, i);
+		if (!vol)
 			continue;
 
-		ubi_do_get_volume_info(ubi, ubi->volumes[i], &nt.vi);
+		ubi_do_get_volume_info(ubi, vol, &nt.vi);
 		if (nb)
 			nb->notifier_call(nb, ntype, &nt);
 		else
 			blocking_notifier_call_chain(&ubi_notifiers, ntype,
 						     &nt);
 		count += 1;
+		ubi_put_volume(vol);
 	}
 	mutex_unlock(&ubi->device_mutex);
 

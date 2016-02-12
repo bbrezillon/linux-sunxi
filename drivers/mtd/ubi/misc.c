@@ -50,19 +50,17 @@ int ubi_calc_data_len(const struct ubi_device *ubi, const void *buf,
 
 /**
  * ubi_check_volume - check the contents of a static volume.
- * @ubi: UBI device description object
- * @vol_id: ID of the volume to check
+ * @vol: volume description object
  *
- * This function checks if static volume @vol_id is corrupted by fully reading
+ * This function checks if static volume @vol is corrupted by fully reading
  * it and checking data CRC. This function returns %0 if the volume is not
  * corrupted, %1 if it is corrupted and a negative error code in case of
  * failure. Dynamic volumes are not checked and zero is returned immediately.
  */
-int ubi_check_volume(struct ubi_device *ubi, int vol_id)
+int ubi_check_volume(struct ubi_volume *vol)
 {
 	void *buf;
 	int err = 0, i;
-	struct ubi_volume *vol = ubi->volumes[vol_id];
 
 	if (vol->vol_type != UBI_STATIC_VOLUME)
 		return 0;
@@ -81,7 +79,7 @@ int ubi_check_volume(struct ubi_device *ubi, int vol_id)
 		else
 			size = vol->usable_leb_size;
 
-		err = ubi_eba_read_leb(ubi, vol, i, buf, 0, size, 1);
+		err = ubi_eba_read_leb(vol->ubi, vol, i, buf, 0, size, 1);
 		if (err) {
 			if (mtd_is_eccerr(err))
 				err = 1;

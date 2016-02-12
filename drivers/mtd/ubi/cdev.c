@@ -367,7 +367,7 @@ static ssize_t vol_cdev_write(struct file *file, const char __user *buf,
 			return count;
 		}
 
-		err = ubi_check_volume(ubi, vol->vol_id);
+		err = ubi_check_volume(vol);
 		if (err < 0)
 			return err;
 

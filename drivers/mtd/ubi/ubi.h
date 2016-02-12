@@ -411,6 +411,12 @@ struct ubi_debug_info {
 	struct dentry *dfs_power_cut_max;
 };
 
+struct ubi_volumes {
+	int vol_count;
+	struct ubi_volume *volumes[UBI_MAX_VOLUMES+UBI_INT_VOL_COUNT];
+	spinlock_t volumes_lock;
+};
+
 /**
  * struct ubi_device - UBI device description structure
  * @dev: UBI device object to use the the Linux device model
@@ -818,6 +824,9 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs);
 int ubi_rename_volumes(struct ubi_device *ubi, struct list_head *rename_list);
 int ubi_add_volume(struct ubi_device *ubi, struct ubi_volume *vol);
 void ubi_free_volume(struct ubi_device *ubi, struct ubi_volume *vol);
+struct ubi_volume *ubi_get_volume_by_idx(struct ubi_device *ubi, int idx);
+struct ubi_volume *ubi_get_volume_by_vol_id(struct ubi_device *ubi, int vol_id);
+void ubi_put_volume(struct ubi_volume *vol);
 
 /* upd.c */
 int ubi_start_update(struct ubi_device *ubi, struct ubi_volume *vol,
@@ -832,7 +841,7 @@ int ubi_more_leb_change_data(struct ubi_device *ubi, struct ubi_volume *vol,
 /* misc.c */
 int ubi_calc_data_len(const struct ubi_device *ubi, const void *buf,
 		      int length);
-int ubi_check_volume(struct ubi_device *ubi, int vol_id);
+int ubi_check_volume(struct ubi_volume *vol);
 void ubi_update_reserved(struct ubi_device *ubi);
 void ubi_calculate_reserved(struct ubi_device *ubi);
 int ubi_check_pattern(const void *buf, uint8_t patt, int size);

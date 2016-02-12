@@ -76,17 +76,18 @@ static struct ubi_vtbl_record empty_vtbl_record;
 static int ubi_update_layout_vol(struct ubi_device *ubi)
 {
 	struct ubi_volume *layout_vol;
-	int i, err;
+	int i, err = 0;
 
-	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
+	layout_vol = ubi_get_volume_by_vol_id(ubi, UBI_LAYOUT_VOLUME_ID);
 	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
 		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
 						ubi->vtbl_size);
 		if (err)
-			return err;
+			break;
 	}
+	ubi_put_volume(layout_vol);
 
-	return 0;
+	return err;
 }
 
 /**

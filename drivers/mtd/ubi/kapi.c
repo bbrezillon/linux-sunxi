@@ -204,7 +204,7 @@ struct ubi_volume_desc *ubi_open_volume(int ubi_num, int vol_id, int mode)
 	mutex_lock(&ubi->ckvol_mutex);
 	if (!vol->checked) {
 		/* This is the first open - check the volume */
-		err = ubi_check_volume(ubi, vol_id);
+		err = ubi_check_volume(vol);
 		if (err < 0) {
 			mutex_unlock(&ubi->ckvol_mutex);
 			ubi_close_volume(desc);
