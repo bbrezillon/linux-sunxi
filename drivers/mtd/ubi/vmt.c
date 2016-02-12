@@ -143,6 +143,62 @@ static void vol_release(struct device *dev)
 }
 
 /**
+ * ubi_register_volume - add volume.
+ * @vol: volume description object
+ *
+ * This function registers an existing volume to expose it to userspace.
+ * Returns zero in case of success and a negative error code in case of
+ * failure.
+ */
+static int ubi_register_volume(struct ubi_volume *vol)
+{
+	struct ubi_device *ubi = vol->ubi;
+	int err, vol_id = vol->vol_id;
+	dev_t dev;
+
+	dbg_gen("add volume %d", vol_id);
+
+	/* Register character device for the volume */
+	cdev_init(&vol->cdev, &ubi_vol_cdev_operations);
+	vol->cdev.owner = THIS_MODULE;
+	dev = MKDEV(MAJOR(ubi->cdev.dev), vol->vol_id + 1);
+	err = cdev_add(&vol->cdev, dev, 1);
+	if (err) {
+		ubi_err(ubi, "cannot add character device for volume %d, error %d",
+			vol_id, err);
+		return err;
+	}
+
+	vol->dev.release = vol_release;
+	vol->dev.parent = &ubi->dev;
+	vol->dev.devt = dev;
+	vol->dev.class = &ubi_class;
+	vol->dev.groups = volume_dev_groups;
+	dev_set_name(&vol->dev, "%s_%d", ubi->ubi_name, vol->vol_id);
+	err = device_register(&vol->dev);
+	if (err)
+		goto out_cdev;
+
+	return 0;
+
+out_cdev:
+	cdev_del(&vol->cdev);
+	return err;
+}
+
+/**
+ * ubi_unregister_volume - unregister volume.
+ * @vol: volume description object
+ *
+ * This function unregisters the device associated with a UBI volume.
+ */
+static void ubi_unregister_volume(struct ubi_volume *vol)
+{
+	device_unregister(&vol->dev);
+	cdev_del(&vol->cdev);
+}
+
+/**
  * ubi_create_volume - create volume.
  * @ubi: UBI device description object
  * @req: volume creation request
@@ -158,7 +214,6 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	int i, err, vol_id = req->vol_id, do_free = 1;
 	struct ubi_volume *vol;
 	struct ubi_vtbl_record vtbl_rec;
-	dev_t dev;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -261,27 +316,9 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	}
 
 	/* Register character device for the volume */
-	cdev_init(&vol->cdev, &ubi_vol_cdev_operations);
-	vol->cdev.owner = THIS_MODULE;
-	dev = MKDEV(MAJOR(ubi->cdev.dev), vol_id + 1);
-	err = cdev_add(&vol->cdev, dev, 1);
-	if (err) {
-		ubi_err(ubi, "cannot add character device");
+	err = ubi_register_volume(vol);
+	if (err)
 		goto out_mapping;
-	}
-
-	vol->dev.release = vol_release;
-	vol->dev.parent = &ubi->dev;
-	vol->dev.devt = dev;
-	vol->dev.class = &ubi_class;
-	vol->dev.groups = volume_dev_groups;
-
-	dev_set_name(&vol->dev, "%s_%d", ubi->ubi_name, vol->vol_id);
-	err = device_register(&vol->dev);
-	if (err) {
-		ubi_err(ubi, "cannot register device");
-		goto out_cdev;
-	}
 
 	/* Fill volume table record */
 	memset(&vtbl_rec, 0, sizeof(struct ubi_vtbl_record));
@@ -319,9 +356,7 @@ out_sysfs:
 	 */
 	do_free = 0;
 	get_device(&vol->dev);
-	device_unregister(&vol->dev);
-out_cdev:
-	cdev_del(&vol->cdev);
+	ubi_unregister_volume(vol);
 out_mapping:
 	if (do_free)
 		ubi_eba_vol_cleanup(vol);
@@ -386,8 +421,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 			goto out_err;
 	}
 
-	cdev_del(&vol->cdev);
-	device_unregister(&vol->dev);
+	ubi_unregister_volume(vol);
 
 	spin_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= reserved_pebs;
@@ -575,37 +609,12 @@ int ubi_rename_volumes(struct ubi_device *ubi, struct list_head *rename_list)
  */
 int ubi_add_volume(struct ubi_device *ubi, struct ubi_volume *vol)
 {
-	int err, vol_id = vol->vol_id;
-	dev_t dev;
+	int err;
 
-	dbg_gen("add volume %d", vol_id);
-
-	/* Register character device for the volume */
-	cdev_init(&vol->cdev, &ubi_vol_cdev_operations);
-	vol->cdev.owner = THIS_MODULE;
-	dev = MKDEV(MAJOR(ubi->cdev.dev), vol->vol_id + 1);
-	err = cdev_add(&vol->cdev, dev, 1);
-	if (err) {
-		ubi_err(ubi, "cannot add character device for volume %d, error %d",
-			vol_id, err);
-		return err;
-	}
-
-	vol->dev.release = vol_release;
-	vol->dev.parent = &ubi->dev;
-	vol->dev.devt = dev;
-	vol->dev.class = &ubi_class;
-	vol->dev.groups = volume_dev_groups;
-	dev_set_name(&vol->dev, "%s_%d", ubi->ubi_name, vol->vol_id);
-	err = device_register(&vol->dev);
-	if (err)
-		goto out_cdev;
+	dbg_gen("add volume %d", vol->vol_id);
+	err = ubi_register_volume(vol);
 
 	self_check_volumes(ubi);
-	return err;
-
-out_cdev:
-	cdev_del(&vol->cdev);
 	return err;
 }
 
@@ -622,8 +631,8 @@ void ubi_free_volume(struct ubi_device *ubi, struct ubi_volume *vol)
 	dbg_gen("free volume %d", vol->vol_id);
 
 	ubi->volumes[vol->vol_id] = NULL;
-	cdev_del(&vol->cdev);
-	device_unregister(&vol->dev);
+
+	ubi_unregister_volume(vol);
 }
 
 /**
