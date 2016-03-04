@@ -143,6 +143,8 @@
 &nfc {
 	pinctrl-names = "default";
 	pinctrl-0 = <&nand_pins_a &nand_cs0_pins_a &nand_rb0_pins_a>;
+	dmas = <&dma 1 3>;
+	dma-names = "rxtx";
 	status = "okay";
 
 	nand@0 {
