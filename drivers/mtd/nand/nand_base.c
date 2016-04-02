@@ -1883,8 +1883,8 @@ read_retry:
  *
  * Get hold of the chip and call nand_do_read.
  */
-static int nand_read(struct mtd_info *mtd, loff_t from, size_t len,
-		     size_t *retlen, uint8_t *buf)
+static int rawnand_read(struct mtd_info *mtd, loff_t from, size_t len,
+			size_t *retlen, uint8_t *buf)
 {
 	struct mtd_oob_ops ops;
 	int ret;
@@ -2710,8 +2710,8 @@ static int panic_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
  *
  * NAND write with ECC.
  */
-static int nand_write(struct mtd_info *mtd, loff_t to, size_t len,
-			  size_t *retlen, const uint8_t *buf)
+static int rawnand_write(struct mtd_info *mtd, loff_t to, size_t len,
+			 size_t *retlen, const uint8_t *buf)
 {
 	struct mtd_oob_ops ops;
 	int ret;
@@ -2876,7 +2876,7 @@ static int single_erase(struct mtd_info *mtd, int page)
  *
  * Erase one ore more blocks.
  */
-static int nand_erase(struct mtd_info *mtd, struct erase_info *instr)
+static int rawnand_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	return nand_erase_nand(mtd, instr, 0);
 }
@@ -4370,11 +4370,11 @@ int nand_scan_tail(struct mtd_info *mtd)
 	mtd->type = nand_is_slc(chip) ? MTD_NANDFLASH : MTD_MLCNANDFLASH;
 	mtd->flags = (chip->options & NAND_ROM) ? MTD_CAP_ROM :
 						MTD_CAP_NANDFLASH;
-	mtd->_erase = nand_erase;
+	mtd->_erase = rawnand_erase;
 	mtd->_point = NULL;
 	mtd->_unpoint = NULL;
-	mtd->_read = nand_read;
-	mtd->_write = nand_write;
+	mtd->_read = rawnand_read;
+	mtd->_write = rawnand_write;
 	mtd->_panic_write = panic_nand_write;
 	mtd->_read_oob = nand_read_oob;
 	mtd->_write_oob = nand_write_oob;
