@@ -8,11 +8,11 @@
  */
 #include <linux/kernel.h>
 #include <linux/of_mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/export.h>
 
 /**
- * It maps 'enum nand_ecc_modes_t' found in include/linux/mtd/nand.h
+ * It maps 'enum nand_ecc_modes_t' found in include/linux/mtd/rawnand.h
  * into the device tree binding of 'nand-ecc', so that MTD
  * device driver can get nand ecc from device tree.
  */

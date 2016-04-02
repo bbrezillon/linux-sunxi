@@ -6,7 +6,7 @@
  *  Copyright © 2012 John Crispin <blogic@openwrt.org>
  */
 
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
 

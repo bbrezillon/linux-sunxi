@@ -13,7 +13,7 @@
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/omap-gpmc.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/platform_data/mtd-nand-omap2.h>
 
 #include <asm/mach/flash.h>

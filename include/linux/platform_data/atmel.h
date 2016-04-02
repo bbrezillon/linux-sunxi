@@ -7,7 +7,7 @@
 #ifndef __ATMEL_H__
 #define __ATMEL_H__
 
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/serial.h>
 

@@ -15,7 +15,7 @@
 
 #include <linux/dm9000.h>
 #include <linux/rtc-v3020.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <linux/input.h>

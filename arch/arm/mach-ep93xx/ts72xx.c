@@ -17,7 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/m48t86.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 
 #include <mach/hardware.h>

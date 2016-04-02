@@ -32,7 +32,7 @@
 #include <linux/of_gpio.h>
 #include <linux/of_mtd.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
