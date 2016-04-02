@@ -22,9 +22,17 @@ struct nand_memory_organization {
 	size_t chipsize;
 };
 
+struct nand_device;
+
+struct nand_ops {
+	int (*erase)(struct nand_device *nand, struct erase_info *einfo);
+};
+
 struct nand_device {
 	struct mtd_info mtd;
 	struct nand_memory_organization memorg;
+
+	const struct nand_ops *ops;
 };
 
 static inline struct nand_device *mtd_to_nand(struct mtd_info *mtd)
@@ -45,12 +53,34 @@ nand_get_mem_organization(const struct nand_device *nand)
 
 static inline int nand_register(struct nand_device *nand)
 {
-	return mtd_device_register(&nand->mtd);
+	return mtd_device_register(&nand->mtd, NULL, 0);
 }
 
 static inline void nand_unregister(struct nand_device *nand)
 {
 	mtd_device_unregister(&nand->mtd);
+}
+
+static inline int nand_read(struct nand_device *nand, loff_t offs,
+			    struct mtd_oob_ops *ops)
+{
+	return mtd_read_oob(&nand->mtd, offs, ops);
+}
+
+static inline int nand_write(struct nand_device *nand, loff_t offs,
+			     struct mtd_oob_ops *ops)
+{
+	return mtd_write_oob(&nand->mtd, offs, ops);
+}
+
+static inline int nand_erase(struct nand_device *nand,
+			     struct erase_info *einfo,
+			     bool force)
+{
+	if (!force)
+		return mtd_erase(&nand->mtd, einfo);
+
+	return nand->ops->erase(nand, einfo);
 }
 
 #endif /* __LINUX_MTD_NAND_H */
