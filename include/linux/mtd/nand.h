@@ -27,6 +27,16 @@ struct nand_device {
 	struct nand_memory_organization memorg;
 };
 
+static inline struct nand_device *mtd_to_nand(struct mtd_info *mtd)
+{
+	return container_of(mtd, struct nand_device, mtd);
+}
+
+static inline struct mtd_info *nand_to_mtd(struct nand_device *nand)
+{
+	return &nand->mtd;
+}
+
 static inline const struct nand_memory_organization*
 nand_get_mem_organization(const struct nand_device *nand)
 {
