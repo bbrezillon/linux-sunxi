@@ -64,7 +64,7 @@ static struct mtd_partition partition_info[] = {
 
 static void ams_delta_write_byte(struct mtd_info *mtd, u_char byte)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	void __iomem *io_base = (void __iomem *)nand_get_controller_data(this);
 
 	writew(0, io_base + OMAP_MPUIO_IO_CNTL);
@@ -77,7 +77,7 @@ static void ams_delta_write_byte(struct mtd_info *mtd, u_char byte)
 static u_char ams_delta_read_byte(struct mtd_info *mtd)
 {
 	u_char res;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	void __iomem *io_base = (void __iomem *)nand_get_controller_data(this);
 
 	gpio_set_value(AMS_DELTA_GPIO_PIN_NAND_NRE, 0);
@@ -190,7 +190,7 @@ static int ams_delta_init(struct platform_device *pdev)
 		goto out;
 	}
 
-	ams_delta_mtd = nand_to_mtd(this);
+	ams_delta_mtd = rawnand_to_mtd(this);
 	ams_delta_mtd->owner = THIS_MODULE;
 
 	/*
@@ -270,7 +270,7 @@ static int ams_delta_cleanup(struct platform_device *pdev)
 	iounmap(io_base);
 
 	/* Free the MTD device structure */
-	kfree(mtd_to_nand(ams_delta_mtd));
+	kfree(mtd_to_rawnand(ams_delta_mtd));
 
 	return 0;
 }

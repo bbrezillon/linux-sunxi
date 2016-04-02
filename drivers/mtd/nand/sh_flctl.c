@@ -1122,7 +1122,7 @@ static int flctl_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, flctl);
 	nand = &flctl->chip;
-	flctl_mtd = nand_to_mtd(nand);
+	flctl_mtd = rawnand_to_mtd(nand);
 	nand_set_flash_node(nand, pdev->dev.of_node);
 	flctl_mtd->dev.parent = &pdev->dev;
 	flctl->pdev = pdev;
@@ -1178,7 +1178,7 @@ static int flctl_remove(struct platform_device *pdev)
 	struct sh_flctl *flctl = platform_get_drvdata(pdev);
 
 	flctl_release_dma(flctl);
-	nand_release(nand_to_mtd(&flctl->chip));
+	nand_release(rawnand_to_mtd(&flctl->chip));
 	pm_runtime_disable(&pdev->dev);
 
 	return 0;

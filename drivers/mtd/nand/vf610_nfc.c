@@ -172,7 +172,7 @@ struct vf610_nfc {
 
 static inline struct vf610_nfc *mtd_to_nfc(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct vf610_nfc, chip);
+	return container_of(mtd_to_rawnand(mtd), struct vf610_nfc, chip);
 }
 
 static struct nand_ecclayout vf610_nfc_ecc45 = {
@@ -677,7 +677,7 @@ static int vf610_nfc_probe(struct platform_device *pdev)
 
 	nfc->dev = &pdev->dev;
 	chip = &nfc->chip;
-	mtd = nand_to_mtd(chip);
+	mtd = rawnand_to_mtd(chip);
 
 	mtd->owner = THIS_MODULE;
 	mtd->dev.parent = nfc->dev;

@@ -134,7 +134,7 @@ static void mpc5121_nfc_done(struct mtd_info *mtd);
 /* Read NFC register */
 static inline u16 nfc_read(struct mtd_info *mtd, uint reg)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 
 	return in_be16(prv->regs + reg);
@@ -143,7 +143,7 @@ static inline u16 nfc_read(struct mtd_info *mtd, uint reg)
 /* Write NFC register */
 static inline void nfc_write(struct mtd_info *mtd, uint reg, u16 val)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 
 	out_be16(prv->regs + reg, val);
@@ -213,7 +213,7 @@ static inline void mpc5121_nfc_send_read_status(struct mtd_info *mtd)
 static irqreturn_t mpc5121_nfc_irq(int irq, void *data)
 {
 	struct mtd_info *mtd = data;
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 
 	nfc_set(mtd, NFC_CONFIG1, NFC_INT_MASK);
@@ -225,7 +225,7 @@ static irqreturn_t mpc5121_nfc_irq(int irq, void *data)
 /* Wait for operation complete */
 static void mpc5121_nfc_done(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 	int rv;
 
@@ -245,7 +245,7 @@ static void mpc5121_nfc_done(struct mtd_info *mtd)
 /* Do address cycle(s) */
 static void mpc5121_nfc_addr_cycle(struct mtd_info *mtd, int column, int page)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	u32 pagemask = chip->pagemask;
 
 	if (column != -1) {
@@ -280,7 +280,7 @@ static void mpc5121_nfc_select_chip(struct mtd_info *mtd, int chip)
 /* Init external chip select logic on ADS5121 board */
 static int ads5121_chipselect_init(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 	struct device_node *dn;
 
@@ -302,7 +302,7 @@ static int ads5121_chipselect_init(struct mtd_info *mtd)
 /* Control chips select signal on ADS5121 board */
 static void ads5121_select_chip(struct mtd_info *mtd, int chip)
 {
-	struct nand_chip *nand = mtd_to_nand(mtd);
+	struct nand_chip *nand = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(nand);
 	u8 v;
 
@@ -332,7 +332,7 @@ static int mpc5121_nfc_dev_ready(struct mtd_info *mtd)
 static void mpc5121_nfc_command(struct mtd_info *mtd, unsigned command,
 							int column, int page)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 
 	prv->column = (column >= 0) ? column : 0;
@@ -405,7 +405,7 @@ static void mpc5121_nfc_command(struct mtd_info *mtd, unsigned command,
 static void mpc5121_nfc_copy_spare(struct mtd_info *mtd, uint offset,
 						u8 *buffer, uint size, int wr)
 {
-	struct nand_chip *nand = mtd_to_nand(mtd);
+	struct nand_chip *nand = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(nand);
 	uint o, s, sbsize, blksize;
 
@@ -457,7 +457,7 @@ static void mpc5121_nfc_copy_spare(struct mtd_info *mtd, uint offset,
 static void mpc5121_nfc_buf_copy(struct mtd_info *mtd, u_char *buf, int len,
 									int wr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 	uint c = prv->column;
 	uint l;
@@ -535,7 +535,7 @@ static u16 mpc5121_nfc_read_word(struct mtd_info *mtd)
  */
 static int mpc5121_nfc_read_hw_config(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 	struct mpc512x_reset_module *rm;
 	struct device_node *rmnode;
@@ -614,7 +614,7 @@ out:
 /* Free driver resources */
 static void mpc5121_nfc_free(struct device *dev, struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct mpc5121_nfc_prv *prv = nand_get_controller_data(chip);
 
 	if (prv->clk)
@@ -654,7 +654,7 @@ static int mpc5121_nfc_probe(struct platform_device *op)
 		return -ENOMEM;
 
 	chip = &prv->chip;
-	mtd = nand_to_mtd(chip);
+	mtd = rawnand_to_mtd(chip);
 
 	mtd->dev.parent = dev;
 	nand_set_controller_data(chip, prv);

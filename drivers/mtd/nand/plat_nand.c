@@ -57,7 +57,7 @@ static int plat_nand_probe(struct platform_device *pdev)
 		return PTR_ERR(data->io_base);
 
 	nand_set_flash_node(&data->chip, pdev->dev.of_node);
-	mtd = nand_to_mtd(&data->chip);
+	mtd = rawnand_to_mtd(&data->chip);
 	mtd->dev.parent = &pdev->dev;
 
 	data->chip.IO_ADDR_R = data->io_base;
@@ -114,7 +114,7 @@ static int plat_nand_remove(struct platform_device *pdev)
 	struct plat_nand_data *data = platform_get_drvdata(pdev);
 	struct platform_nand_data *pdata = dev_get_platdata(&pdev->dev);
 
-	nand_release(nand_to_mtd(&data->chip));
+	nand_release(rawnand_to_mtd(&data->chip));
 	if (pdata->ctrl.remove)
 		pdata->ctrl.remove(pdev);
 

@@ -81,7 +81,7 @@ static bool ecc4_busy;
 
 static inline struct davinci_nand_info *to_davinci_nand(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct davinci_nand_info, chip);
+	return container_of(mtd_to_rawnand(mtd), struct davinci_nand_info, chip);
 }
 
 static inline unsigned int davinci_nand_readl(struct davinci_nand_info *info,
@@ -107,7 +107,7 @@ static void nand_davinci_hwcontrol(struct mtd_info *mtd, int cmd,
 {
 	struct davinci_nand_info	*info = to_davinci_nand(mtd);
 	uint32_t			addr = info->current_cs;
-	struct nand_chip		*nand = mtd_to_nand(mtd);
+	struct nand_chip		*nand = mtd_to_rawnand(mtd);
 
 	/* Did the control lines change? */
 	if (ctrl & NAND_CTRL_CHANGE) {
@@ -193,7 +193,7 @@ static int nand_davinci_calculate_1bit(struct mtd_info *mtd,
 static int nand_davinci_correct_1bit(struct mtd_info *mtd, u_char *dat,
 				     u_char *read_ecc, u_char *calc_ecc)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	uint32_t eccNand = read_ecc[0] | (read_ecc[1] << 8) |
 					  (read_ecc[2] << 16);
 	uint32_t eccCalc = calc_ecc[0] | (calc_ecc[1] << 8) |
@@ -440,7 +440,7 @@ correct:
  */
 static void nand_davinci_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	if ((0x03 & ((unsigned)buf)) == 0 && (0x03 & len) == 0)
 		ioread32_rep(chip->IO_ADDR_R, buf, len >> 2);
@@ -453,7 +453,7 @@ static void nand_davinci_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 static void nand_davinci_write_buf(struct mtd_info *mtd,
 		const uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	if ((0x03 & ((unsigned)buf)) == 0 && (0x03 & len) == 0)
 		iowrite32_rep(chip->IO_ADDR_R, buf, len >> 2);
@@ -676,7 +676,7 @@ static int nand_davinci_probe(struct platform_device *pdev)
 	info->base		= base;
 	info->vaddr		= vaddr;
 
-	mtd			= nand_to_mtd(&info->chip);
+	mtd			= rawnand_to_mtd(&info->chip);
 	mtd->dev.parent		= &pdev->dev;
 	nand_set_flash_node(&info->chip, pdev->dev.of_node);
 
@@ -865,7 +865,7 @@ static int nand_davinci_remove(struct platform_device *pdev)
 		ecc4_busy = false;
 	spin_unlock_irq(&davinci_nand_lock);
 
-	nand_release(nand_to_mtd(&info->chip));
+	nand_release(rawnand_to_mtd(&info->chip));
 
 	clk_disable_unprepare(info->clk);
 

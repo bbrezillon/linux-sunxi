@@ -188,7 +188,7 @@ static void atmel_nand_disable(struct atmel_nand_host *host)
  */
 static void atmel_nand_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	if (ctrl & NAND_CTRL_CHANGE) {
@@ -211,7 +211,7 @@ static void atmel_nand_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl
  */
 static int atmel_nand_device_ready(struct mtd_info *mtd)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	return gpio_get_value(host->board.rdy_pin) ^
@@ -221,7 +221,7 @@ static int atmel_nand_device_ready(struct mtd_info *mtd)
 /* Set up for hardware ready pin and enable pin. */
 static int atmel_nand_set_enable_ready_pins(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 	int res = 0;
 
@@ -273,7 +273,7 @@ static int atmel_nand_set_enable_ready_pins(struct mtd_info *mtd)
  */
 static void atmel_read_buf8(struct mtd_info *mtd, u8 *buf, int len)
 {
-	struct nand_chip	*nand_chip = mtd_to_nand(mtd);
+	struct nand_chip	*nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	if (host->nfc && host->nfc->use_nfc_sram && host->nfc->data_in_sram) {
@@ -286,7 +286,7 @@ static void atmel_read_buf8(struct mtd_info *mtd, u8 *buf, int len)
 
 static void atmel_read_buf16(struct mtd_info *mtd, u8 *buf, int len)
 {
-	struct nand_chip	*nand_chip = mtd_to_nand(mtd);
+	struct nand_chip	*nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	if (host->nfc && host->nfc->use_nfc_sram && host->nfc->data_in_sram) {
@@ -299,14 +299,14 @@ static void atmel_read_buf16(struct mtd_info *mtd, u8 *buf, int len)
 
 static void atmel_write_buf8(struct mtd_info *mtd, const u8 *buf, int len)
 {
-	struct nand_chip	*nand_chip = mtd_to_nand(mtd);
+	struct nand_chip	*nand_chip = mtd_to_rawnand(mtd);
 
 	__raw_writesb(nand_chip->IO_ADDR_W, buf, len);
 }
 
 static void atmel_write_buf16(struct mtd_info *mtd, const u8 *buf, int len)
 {
-	struct nand_chip	*nand_chip = mtd_to_nand(mtd);
+	struct nand_chip	*nand_chip = mtd_to_rawnand(mtd);
 
 	__raw_writesw(nand_chip->IO_ADDR_W, buf, len / 2);
 }
@@ -323,7 +323,7 @@ static int nfc_set_sram_bank(struct atmel_nand_host *host, unsigned int bank)
 		return -EINVAL;
 
 	if (bank) {
-		struct mtd_info *mtd = nand_to_mtd(&host->nand_chip);
+		struct mtd_info *mtd = rawnand_to_mtd(&host->nand_chip);
 
 		/* Only for a 2k-page or lower flash, NFC can handle 2 banks */
 		if (mtd->writesize > 2048)
@@ -360,7 +360,7 @@ static int atmel_nand_dma_op(struct mtd_info *mtd, void *buf, int len,
 	dma_addr_t dma_src_addr, dma_dst_addr, phys_addr;
 	struct dma_async_tx_descriptor *tx = NULL;
 	dma_cookie_t cookie;
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 	void *p = buf;
 	int err = -EIO;
@@ -433,7 +433,7 @@ err_buf:
 
 static void atmel_read_buf(struct mtd_info *mtd, u8 *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 
 	if (use_dma && len > mtd->oobsize)
@@ -449,7 +449,7 @@ static void atmel_read_buf(struct mtd_info *mtd, u8 *buf, int len)
 
 static void atmel_write_buf(struct mtd_info *mtd, const u8 *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 
 	if (use_dma && len > mtd->oobsize)
@@ -542,7 +542,7 @@ static int pmecc_data_alloc(struct atmel_nand_host *host)
 
 static void pmecc_gen_syndrome(struct mtd_info *mtd, int sector)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	int i;
 	uint32_t value;
@@ -559,7 +559,7 @@ static void pmecc_gen_syndrome(struct mtd_info *mtd, int sector)
 
 static void pmecc_substitute(struct mtd_info *mtd)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	int16_t __iomem *alpha_to = host->pmecc_alpha_to;
 	int16_t __iomem *index_of = host->pmecc_index_of;
@@ -601,7 +601,7 @@ static void pmecc_substitute(struct mtd_info *mtd)
 
 static void pmecc_get_sigma(struct mtd_info *mtd)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	int16_t *lmu = host->pmecc_lmu;
@@ -759,7 +759,7 @@ static void pmecc_get_sigma(struct mtd_info *mtd)
 
 static int pmecc_err_location(struct mtd_info *mtd)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	unsigned long end_time;
 	const int cap = host->pmecc_corr_cap;
@@ -811,7 +811,7 @@ static int pmecc_err_location(struct mtd_info *mtd)
 static void pmecc_correct_data(struct mtd_info *mtd, uint8_t *buf, uint8_t *ecc,
 		int sector_num, int extra_bytes, int err_nbr)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	int i = 0;
 	int byte_pos, bit_pos, sector_size, pos;
@@ -857,7 +857,7 @@ static void pmecc_correct_data(struct mtd_info *mtd, uint8_t *buf, uint8_t *ecc,
 static int pmecc_correction(struct mtd_info *mtd, u32 pmecc_stat, uint8_t *buf,
 	u8 *ecc)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	int i, err_nbr;
 	uint8_t *buf_pos;
@@ -1001,7 +1001,7 @@ static int atmel_nand_pmecc_write_page(struct mtd_info *mtd,
 
 static void atmel_pmecc_core_init(struct mtd_info *mtd)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	uint32_t val = 0;
 	struct nand_ecclayout *ecc_layout;
@@ -1177,7 +1177,7 @@ static int atmel_pmecc_nand_init_params(struct platform_device *pdev,
 					 struct atmel_nand_host *host)
 {
 	struct nand_chip *nand_chip = &host->nand_chip;
-	struct mtd_info *mtd = nand_to_mtd(nand_chip);
+	struct mtd_info *mtd = rawnand_to_mtd(nand_chip);
 	struct resource *regs, *regs_pmerr, *regs_rom;
 	uint16_t *galois_table;
 	int cap, sector_size, err_no;
@@ -1327,7 +1327,7 @@ err:
 static int atmel_nand_calculate(struct mtd_info *mtd,
 		const u_char *dat, unsigned char *ecc_code)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	unsigned int ecc_value;
 
@@ -1431,7 +1431,7 @@ static int atmel_nand_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 static int atmel_nand_correct(struct mtd_info *mtd, u_char *dat,
 		u_char *read_ecc, u_char *isnull)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 	unsigned int ecc_status;
 	unsigned int ecc_word, ecc_bit;
@@ -1497,7 +1497,7 @@ static int atmel_nand_correct(struct mtd_info *mtd, u_char *dat,
  */
 static void atmel_nand_hwctl(struct mtd_info *mtd, int mode)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	if (host->board.need_reset_workaround)
@@ -1610,7 +1610,7 @@ static int atmel_hw_nand_init_params(struct platform_device *pdev,
 					 struct atmel_nand_host *host)
 {
 	struct nand_chip *nand_chip = &host->nand_chip;
-	struct mtd_info *mtd = nand_to_mtd(nand_chip);
+	struct mtd_info *mtd = rawnand_to_mtd(nand_chip);
 	struct resource		*regs;
 
 	regs = platform_get_resource(pdev, IORESOURCE_MEM, 1);
@@ -1794,7 +1794,7 @@ static int nfc_send_command(struct atmel_nand_host *host,
 static int nfc_device_ready(struct mtd_info *mtd)
 {
 	u32 status, mask;
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	status = nfc_read_status(host);
@@ -1810,7 +1810,7 @@ static int nfc_device_ready(struct mtd_info *mtd)
 
 static void nfc_select_chip(struct mtd_info *mtd, int chip)
 {
-	struct nand_chip *nand_chip = mtd_to_nand(mtd);
+	struct nand_chip *nand_chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(nand_chip);
 
 	if (chip == -1)
@@ -1822,7 +1822,7 @@ static void nfc_select_chip(struct mtd_info *mtd, int chip)
 static int nfc_make_addr(struct mtd_info *mtd, int command, int column,
 		int page_addr, unsigned int *addr1234, unsigned int *cycle0)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	int acycle = 0;
 	unsigned char addr_bytes[8];
@@ -1862,7 +1862,7 @@ static int nfc_make_addr(struct mtd_info *mtd, int command, int column,
 static void nfc_nand_command(struct mtd_info *mtd, unsigned int command,
 				int column, int page_addr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 	unsigned long timeout;
 	unsigned int nfc_addr_cmd = 0;
@@ -2049,7 +2049,7 @@ static int nfc_sram_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 static int nfc_sram_init(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct atmel_nand_host *host = nand_get_controller_data(chip);
 	int res = 0;
 
@@ -2136,7 +2136,7 @@ static int atmel_nand_probe(struct platform_device *pdev)
 	host->io_phys = (dma_addr_t)mem->start;
 
 	nand_chip = &host->nand_chip;
-	mtd = nand_to_mtd(nand_chip);
+	mtd = rawnand_to_mtd(nand_chip);
 	host->dev = &pdev->dev;
 	if (IS_ENABLED(CONFIG_OF) && pdev->dev.of_node) {
 		nand_set_flash_node(nand_chip, pdev->dev.of_node);
@@ -2306,7 +2306,7 @@ err_nand_ioremap:
 static int atmel_nand_remove(struct platform_device *pdev)
 {
 	struct atmel_nand_host *host = platform_get_drvdata(pdev);
-	struct mtd_info *mtd = nand_to_mtd(&host->nand_chip);
+	struct mtd_info *mtd = rawnand_to_mtd(&host->nand_chip);
 
 	nand_release(mtd);
 

@@ -874,7 +874,7 @@ static void post_command(struct qcom_nand_host *host, int command)
 static void qcom_nandc_command(struct mtd_info *mtd, unsigned int command,
 			       int column, int page_addr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_host *host = to_qcom_nand_host(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
@@ -1009,7 +1009,7 @@ static int parse_read_errors(struct qcom_nand_host *host, u8 *data_buf,
 {
 	struct nand_chip *chip = &host->chip;
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
 	unsigned int max_bitflips = 0;
 	struct read_stats *buf;
@@ -1484,7 +1484,7 @@ static int qcom_nandc_write_oob(struct mtd_info *mtd, struct nand_chip *chip,
 
 static int qcom_nandc_block_bad(struct mtd_info *mtd, loff_t ofs)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_host *host = to_qcom_nand_host(chip);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
@@ -1524,7 +1524,7 @@ err:
 
 static int qcom_nandc_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_host *host = to_qcom_nand_host(chip);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
@@ -1574,7 +1574,7 @@ static int qcom_nandc_block_markbad(struct mtd_info *mtd, loff_t ofs)
  */
 static uint8_t qcom_nandc_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_host *host = to_qcom_nand_host(chip);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	u8 *buf = nandc->data_buffer;
@@ -1596,7 +1596,7 @@ static uint8_t qcom_nandc_read_byte(struct mtd_info *mtd)
 
 static void qcom_nandc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	int real_len = min_t(size_t, len, nandc->buf_count - nandc->buf_start);
 
@@ -1607,7 +1607,7 @@ static void qcom_nandc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 static void qcom_nandc_write_buf(struct mtd_info *mtd, const uint8_t *buf,
 				 int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	int real_len = min_t(size_t, len, nandc->buf_count - nandc->buf_start);
 
@@ -1619,7 +1619,7 @@ static void qcom_nandc_write_buf(struct mtd_info *mtd, const uint8_t *buf,
 /* we support only one external chip for now */
 static void qcom_nandc_select_chip(struct mtd_info *mtd, int chipnr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 
 	if (chipnr <= 0)
@@ -1718,7 +1718,7 @@ static struct nand_ecclayout *
 qcom_nand_create_layout(struct qcom_nand_host *host)
 {
 	struct nand_chip *chip = &host->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
 	struct nand_ecclayout *layout;
@@ -1768,7 +1768,7 @@ qcom_nand_create_layout(struct qcom_nand_host *host)
 static int qcom_nand_host_setup(struct qcom_nand_host *host)
 {
 	struct nand_chip *chip = &host->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
 	struct qcom_nand_controller *nandc = get_qcom_nand_controller(chip);
 	int cwperpage, bad_block_byte;
@@ -2003,7 +2003,7 @@ static int qcom_nand_host_init(struct qcom_nand_controller *nandc,
 			       struct device_node *dn)
 {
 	struct nand_chip *chip = &host->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct device *dev = nandc->dev;
 	int ret;
 
@@ -2167,7 +2167,7 @@ static int qcom_nandc_probe(struct platform_device *pdev)
 
 err_cs_init:
 	list_for_each_entry(host, &nandc->host_list, node)
-		nand_release(nand_to_mtd(&host->chip));
+		nand_release(rawnand_to_mtd(&host->chip));
 err_setup:
 	clk_disable_unprepare(nandc->aon_clk);
 err_aon_clk:
@@ -2184,7 +2184,7 @@ static int qcom_nandc_remove(struct platform_device *pdev)
 	struct qcom_nand_host *host;
 
 	list_for_each_entry(host, &nandc->host_list, node)
-		nand_release(nand_to_mtd(&host->chip));
+		nand_release(rawnand_to_mtd(&host->chip));
 
 	qcom_nandc_unalloc(nandc);
 

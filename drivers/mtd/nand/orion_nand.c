@@ -25,7 +25,7 @@
 
 static void orion_nand_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
-	struct nand_chip *nc = mtd_to_nand(mtd);
+	struct nand_chip *nc = mtd_to_rawnand(mtd);
 	struct orion_nand_data *board = nand_get_controller_data(nc);
 	u32 offs;
 
@@ -47,7 +47,7 @@ static void orion_nand_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl
 
 static void orion_nand_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	void __iomem *io_base = chip->IO_ADDR_R;
 	uint64_t *buf64;
 	int i = 0;
@@ -89,7 +89,7 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 			GFP_KERNEL);
 	if (!nc)
 		return -ENOMEM;
-	mtd = nand_to_mtd(nc);
+	mtd = rawnand_to_mtd(nc);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	io_base = devm_ioremap_resource(&pdev->dev, res);

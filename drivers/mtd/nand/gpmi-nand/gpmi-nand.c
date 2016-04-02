@@ -107,7 +107,7 @@ static irqreturn_t bch_irq(int irq, void *cookie)
 static inline int get_ecc_strength(struct gpmi_nand_data *this)
 {
 	struct bch_geometry *geo = &this->bch_geometry;
-	struct mtd_info	*mtd = nand_to_mtd(&this->nand);
+	struct mtd_info	*mtd = rawnand_to_mtd(&this->nand);
 	int ecc_strength;
 
 	ecc_strength = ((mtd->oobsize - geo->metadata_size) * 8)
@@ -140,7 +140,7 @@ static int set_geometry_by_ecc_info(struct gpmi_nand_data *this)
 {
 	struct bch_geometry *geo = &this->bch_geometry;
 	struct nand_chip *chip = &this->nand;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct nand_oobfree *of = gpmi_hw_ecclayout.oobfree;
 	unsigned int block_mark_bit_offset;
 
@@ -257,7 +257,7 @@ static int set_geometry_by_ecc_info(struct gpmi_nand_data *this)
 static int legacy_set_geometry(struct gpmi_nand_data *this)
 {
 	struct bch_geometry *geo = &this->bch_geometry;
-	struct mtd_info *mtd = nand_to_mtd(&this->nand);
+	struct mtd_info *mtd = rawnand_to_mtd(&this->nand);
 	unsigned int metadata_size;
 	unsigned int status_size;
 	unsigned int block_mark_bit_offset;
@@ -806,7 +806,7 @@ static int gpmi_alloc_dma_buffer(struct gpmi_nand_data *this)
 {
 	struct bch_geometry *geo = &this->bch_geometry;
 	struct device *dev = this->dev;
-	struct mtd_info *mtd = nand_to_mtd(&this->nand);
+	struct mtd_info *mtd = rawnand_to_mtd(&this->nand);
 
 	/* [1] Allocate a command buffer. PAGE_SIZE is enough. */
 	this->cmd_buffer = kzalloc(PAGE_SIZE, GFP_DMA | GFP_KERNEL);
@@ -858,7 +858,7 @@ error_alloc:
 
 static void gpmi_cmd_ctrl(struct mtd_info *mtd, int data, unsigned int ctrl)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 	int ret;
 
@@ -892,7 +892,7 @@ static void gpmi_cmd_ctrl(struct mtd_info *mtd, int data, unsigned int ctrl)
 
 static int gpmi_dev_ready(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 
 	return gpmi_is_ready(this, this->current_chip);
@@ -900,7 +900,7 @@ static int gpmi_dev_ready(struct mtd_info *mtd)
 
 static void gpmi_select_chip(struct mtd_info *mtd, int chipnr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 
 	if ((this->current_chip < 0) && (chipnr >= 0))
@@ -913,7 +913,7 @@ static void gpmi_select_chip(struct mtd_info *mtd, int chipnr)
 
 static void gpmi_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 
 	dev_dbg(this->dev, "len is %d\n", len);
@@ -925,7 +925,7 @@ static void gpmi_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 
 static void gpmi_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 
 	dev_dbg(this->dev, "len is %d\n", len);
@@ -937,7 +937,7 @@ static void gpmi_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 
 static uint8_t gpmi_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 	uint8_t *buf = this->data_buffer_dma;
 
@@ -1540,7 +1540,7 @@ static int gpmi_ecc_write_oob_raw(struct mtd_info *mtd, struct nand_chip *chip,
 
 static int gpmi_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 	int ret = 0;
 	uint8_t *block_mark;
@@ -1603,7 +1603,7 @@ static int mx23_check_transcription_stamp(struct gpmi_nand_data *this)
 	struct boot_rom_geometry *rom_geo = &this->rom_geometry;
 	struct device *dev = this->dev;
 	struct nand_chip *chip = &this->nand;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	unsigned int search_area_size_in_strides;
 	unsigned int stride;
 	unsigned int page;
@@ -1658,7 +1658,7 @@ static int mx23_write_transcription_stamp(struct gpmi_nand_data *this)
 	struct device *dev = this->dev;
 	struct boot_rom_geometry *rom_geo = &this->rom_geometry;
 	struct nand_chip *chip = &this->nand;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	unsigned int block_size_in_pages;
 	unsigned int search_area_size_in_strides;
 	unsigned int search_area_size_in_pages;
@@ -1737,7 +1737,7 @@ static int mx23_boot_init(struct gpmi_nand_data  *this)
 {
 	struct device *dev = this->dev;
 	struct nand_chip *chip = &this->nand;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	unsigned int block_count;
 	unsigned int block;
 	int     chipnr;
@@ -1833,7 +1833,7 @@ static int gpmi_set_geometry(struct gpmi_nand_data *this)
 
 static void gpmi_nand_exit(struct gpmi_nand_data *this)
 {
-	nand_release(nand_to_mtd(&this->nand));
+	nand_release(rawnand_to_mtd(&this->nand));
 	gpmi_free_dma_buffer(this);
 }
 
@@ -1888,7 +1888,7 @@ static int gpmi_init_last(struct gpmi_nand_data *this)
 static int gpmi_nand_init(struct gpmi_nand_data *this)
 {
 	struct nand_chip *chip = &this->nand;
-	struct mtd_info  *mtd = nand_to_mtd(chip);
+	struct mtd_info  *mtd = rawnand_to_mtd(chip);
 	int ret;
 
 	/* init current chip */

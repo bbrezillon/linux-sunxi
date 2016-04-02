@@ -186,7 +186,7 @@ struct sh_flctl_platform_data {
 
 static inline struct sh_flctl *mtd_to_flctl(struct mtd_info *mtdinfo)
 {
-	return container_of(mtd_to_nand(mtdinfo), struct sh_flctl, chip);
+	return container_of(mtd_to_rawnand(mtdinfo), struct sh_flctl, chip);
 }
 
 #endif	/* __SH_FLCTL_H__ */

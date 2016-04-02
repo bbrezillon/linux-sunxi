@@ -75,13 +75,13 @@ struct jz_nand {
 
 static inline struct jz_nand *mtd_to_jz_nand(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct jz_nand, chip);
+	return container_of(mtd_to_rawnand(mtd), struct jz_nand, chip);
 }
 
 static void jz_nand_select_chip(struct mtd_info *mtd, int chipnr)
 {
 	struct jz_nand *nand = mtd_to_jz_nand(mtd);
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	uint32_t ctrl;
 	int banknr;
 
@@ -103,7 +103,7 @@ static void jz_nand_select_chip(struct mtd_info *mtd, int chipnr)
 static void jz_nand_cmd_ctrl(struct mtd_info *mtd, int dat, unsigned int ctrl)
 {
 	struct jz_nand *nand = mtd_to_jz_nand(mtd);
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	uint32_t reg;
 	void __iomem *bank_base = nand->bank_base[nand->selected_bank];
 
@@ -316,7 +316,7 @@ static int jz_nand_detect_bank(struct platform_device *pdev,
 	char res_name[6];
 	uint32_t ctrl;
 	struct nand_chip *chip = &nand->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 
 	/* Request GPIO port. */
 	gpio = JZ_GPIO_MEM_CS0 + bank - 1;
@@ -414,7 +414,7 @@ static int jz_nand_probe(struct platform_device *pdev)
 	}
 
 	chip		= &nand->chip;
-	mtd		= nand_to_mtd(chip);
+	mtd		= rawnand_to_mtd(chip);
 	mtd->dev.parent = &pdev->dev;
 	mtd->name	= "jz4740-nand";
 
@@ -521,7 +521,7 @@ static int jz_nand_remove(struct platform_device *pdev)
 	struct jz_nand *nand = platform_get_drvdata(pdev);
 	size_t i;
 
-	nand_release(nand_to_mtd(&nand->chip));
+	nand_release(rawnand_to_mtd(&nand->chip));
 
 	/* Deassert and disable all chips */
 	writel(0, nand->base + JZ_REG_NAND_CTRL);

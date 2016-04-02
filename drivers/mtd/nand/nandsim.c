@@ -666,7 +666,7 @@ static char *get_partition_name(int i)
  */
 static int init_nandsim(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim   *ns   = nand_get_controller_data(chip);
 	int i, ret = 0;
 	uint64_t remains;
@@ -1908,7 +1908,7 @@ static void switch_state(struct nandsim *ns)
 
 static u_char ns_nand_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 	u_char outb = 0x00;
 
@@ -1970,7 +1970,7 @@ static u_char ns_nand_read_byte(struct mtd_info *mtd)
 
 static void ns_nand_write_byte(struct mtd_info *mtd, u_char byte)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 
 	/* Sanity and correctness checks */
@@ -2125,7 +2125,7 @@ static void ns_nand_write_byte(struct mtd_info *mtd, u_char byte)
 
 static void ns_hwcontrol(struct mtd_info *mtd, int cmd, unsigned int bitmask)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 
 	ns->lines.cle = bitmask & NAND_CLE ? 1 : 0;
@@ -2144,7 +2144,7 @@ static int ns_device_ready(struct mtd_info *mtd)
 
 static uint16_t ns_nand_read_word(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	NS_DBG("read_word\n");
 
@@ -2153,7 +2153,7 @@ static uint16_t ns_nand_read_word(struct mtd_info *mtd)
 
 static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 
 	/* Check that chip is expecting data input */
@@ -2181,7 +2181,7 @@ static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 
 static void ns_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 
 	/* Sanity and correctness checks */
@@ -2203,7 +2203,7 @@ static void ns_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 		int i;
 
 		for (i = 0; i < len; i++)
-			buf[i] = mtd_to_nand(mtd)->read_byte(mtd);
+			buf[i] = mtd_to_rawnand(mtd)->read_byte(mtd);
 
 		return;
 	}
@@ -2247,7 +2247,7 @@ static int __init ns_init_module(void)
 		NS_ERR("unable to allocate core structures.\n");
 		return -ENOMEM;
 	}
-	nsmtd       = nand_to_mtd(chip);
+	nsmtd       = rawnand_to_mtd(chip);
 	nand        = (struct nandsim *)(chip + 1);
 	nand_set_controller_data(chip, (void *)nand);
 
@@ -2409,7 +2409,7 @@ module_init(ns_init_module);
  */
 static void __exit ns_cleanup_module(void)
 {
-	struct nand_chip *chip = mtd_to_nand(nsmtd);
+	struct nand_chip *chip = mtd_to_rawnand(nsmtd);
 	struct nandsim *ns = nand_get_controller_data(chip);
 	int i;
 
@@ -2418,7 +2418,7 @@ static void __exit ns_cleanup_module(void)
 	nand_release(nsmtd); /* Unregister driver */
 	for (i = 0;i < ARRAY_SIZE(ns->partitions); ++i)
 		kfree(ns->partitions[i].name);
-	kfree(mtd_to_nand(nsmtd));        /* Free other structures */
+	kfree(mtd_to_rawnand(nsmtd));        /* Free other structures */
 	free_lists();
 }
 

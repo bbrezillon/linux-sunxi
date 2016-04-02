@@ -36,7 +36,7 @@ struct sharpsl_nand {
 
 static inline struct sharpsl_nand *mtd_to_sharpsl(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct sharpsl_nand, chip);
+	return container_of(mtd_to_rawnand(mtd), struct sharpsl_nand, chip);
 }
 
 /* register offset */
@@ -68,7 +68,7 @@ static void sharpsl_nand_hwcontrol(struct mtd_info *mtd, int cmd,
 				   unsigned int ctrl)
 {
 	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(mtd);
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	if (ctrl & NAND_CTRL_CHANGE) {
 		unsigned char bits = ctrl & 0x07;
@@ -146,7 +146,7 @@ static int sharpsl_nand_probe(struct platform_device *pdev)
 	this = (struct nand_chip *)(&sharpsl->chip);
 
 	/* Link the private data with the MTD structure */
-	mtd = nand_to_mtd(this);
+	mtd = rawnand_to_mtd(this);
 	mtd->dev.parent = &pdev->dev;
 
 	platform_set_drvdata(pdev, sharpsl);
@@ -210,7 +210,7 @@ static int sharpsl_nand_remove(struct platform_device *pdev)
 	struct sharpsl_nand *sharpsl = platform_get_drvdata(pdev);
 
 	/* Release resources, unregister device */
-	nand_release(nand_to_mtd(&sharpsl->chip));
+	nand_release(rawnand_to_mtd(&sharpsl->chip));
 
 	iounmap(sharpsl->io);
 

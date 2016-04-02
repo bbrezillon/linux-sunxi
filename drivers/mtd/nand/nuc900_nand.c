@@ -63,7 +63,7 @@ struct nuc900_nand {
 
 static inline struct nuc900_nand *mtd_to_nuc900(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct nuc900_nand, chip);
+	return container_of(mtd_to_rawnand(mtd), struct nuc900_nand, chip);
 }
 
 static const struct mtd_partition partitions[] = {
@@ -132,7 +132,7 @@ static int nuc900_nand_devready(struct mtd_info *mtd)
 static void nuc900_nand_command_lp(struct mtd_info *mtd, unsigned int command,
 				   int column, int page_addr)
 {
-	register struct nand_chip *chip = mtd_to_nand(mtd);
+	register struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
 
 	if (command == NAND_CMD_READOOB) {
@@ -243,7 +243,7 @@ static int nuc900_nand_probe(struct platform_device *pdev)
 	if (!nuc900_nand)
 		return -ENOMEM;
 	chip = &(nuc900_nand->chip);
-	mtd = nand_to_mtd(chip);
+	mtd = rawnand_to_mtd(chip);
 
 	mtd->dev.parent		= &pdev->dev;
 	spin_lock_init(&nuc900_nand->lock);
@@ -283,7 +283,7 @@ static int nuc900_nand_remove(struct platform_device *pdev)
 {
 	struct nuc900_nand *nuc900_nand = platform_get_drvdata(pdev);
 
-	nand_release(nand_to_mtd(&nuc900_nand->chip));
+	nand_release(rawnand_to_mtd(&nuc900_nand->chip));
 	clk_disable(nuc900_nand->clk);
 
 	return 0;

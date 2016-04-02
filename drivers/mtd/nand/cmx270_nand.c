@@ -53,7 +53,7 @@ static struct mtd_partition partition_info[] = {
 
 static u_char cmx270_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	return (readl(this->IO_ADDR_R) >> 16);
 }
@@ -61,7 +61,7 @@ static u_char cmx270_read_byte(struct mtd_info *mtd)
 static void cmx270_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	for (i=0; i<len; i++)
 		writel((*buf++ << 16), this->IO_ADDR_W);
@@ -70,7 +70,7 @@ static void cmx270_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 static void cmx270_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	for (i=0; i<len; i++)
 		*buf++ = readl(this->IO_ADDR_R) >> 16;
@@ -94,7 +94,7 @@ static void nand_cs_off(void)
 static void cmx270_hwcontrol(struct mtd_info *mtd, int dat,
 			     unsigned int ctrl)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	unsigned int nandaddr = (unsigned int)this->IO_ADDR_W;
 
 	dsb();
@@ -173,7 +173,7 @@ static int __init cmx270_init(void)
 		goto err_ioremap;
 	}
 
-	cmx270_nand_mtd = nand_to_mtd(this);
+	cmx270_nand_mtd = rawnand_to_mtd(this);
 
 	/* Link the private data with the MTD structure */
 	cmx270_nand_mtd->owner = THIS_MODULE;
@@ -236,7 +236,7 @@ static void __exit cmx270_cleanup(void)
 
 	iounmap(cmx270_nand_io);
 
-	kfree(mtd_to_nand(cmx270_nand_mtd));
+	kfree(mtd_to_rawnand(cmx270_nand_mtd));
 }
 module_exit(cmx270_cleanup);
 

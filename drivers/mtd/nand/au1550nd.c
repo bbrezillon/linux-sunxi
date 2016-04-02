@@ -38,7 +38,7 @@ struct au1550nd_ctx {
  */
 static u_char au_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	u_char ret = readb(this->IO_ADDR_R);
 	wmb(); /* drain writebuffer */
 	return ret;
@@ -53,7 +53,7 @@ static u_char au_read_byte(struct mtd_info *mtd)
  */
 static void au_write_byte(struct mtd_info *mtd, u_char byte)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	writeb(byte, this->IO_ADDR_W);
 	wmb(); /* drain writebuffer */
 }
@@ -66,7 +66,7 @@ static void au_write_byte(struct mtd_info *mtd, u_char byte)
  */
 static u_char au_read_byte16(struct mtd_info *mtd)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	u_char ret = (u_char) cpu_to_le16(readw(this->IO_ADDR_R));
 	wmb(); /* drain writebuffer */
 	return ret;
@@ -81,7 +81,7 @@ static u_char au_read_byte16(struct mtd_info *mtd)
  */
 static void au_write_byte16(struct mtd_info *mtd, u_char byte)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	writew(le16_to_cpu((u16) byte), this->IO_ADDR_W);
 	wmb(); /* drain writebuffer */
 }
@@ -94,7 +94,7 @@ static void au_write_byte16(struct mtd_info *mtd, u_char byte)
  */
 static u16 au_read_word(struct mtd_info *mtd)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	u16 ret = readw(this->IO_ADDR_R);
 	wmb(); /* drain writebuffer */
 	return ret;
@@ -111,7 +111,7 @@ static u16 au_read_word(struct mtd_info *mtd)
 static void au_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	for (i = 0; i < len; i++) {
 		writeb(buf[i], this->IO_ADDR_W);
@@ -130,7 +130,7 @@ static void au_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 static void au_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	for (i = 0; i < len; i++) {
 		buf[i] = readb(this->IO_ADDR_R);
@@ -149,7 +149,7 @@ static void au_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 static void au_write_buf16(struct mtd_info *mtd, const u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	u16 *p = (u16 *) buf;
 	len >>= 1;
 
@@ -171,7 +171,7 @@ static void au_write_buf16(struct mtd_info *mtd, const u_char *buf, int len)
 static void au_read_buf16(struct mtd_info *mtd, u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	u16 *p = (u16 *) buf;
 	len >>= 1;
 
@@ -196,7 +196,7 @@ static void au_read_buf16(struct mtd_info *mtd, u_char *buf, int len)
 
 static void au1550_hwcontrol(struct mtd_info *mtd, int cmd)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	struct au1550nd_ctx *ctx = container_of(this, struct au1550nd_ctx,
 						chip);
 
@@ -267,7 +267,7 @@ static void au1550_select_chip(struct mtd_info *mtd, int chip)
  */
 static void au1550_command(struct mtd_info *mtd, unsigned command, int column, int page_addr)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	struct au1550nd_ctx *ctx = container_of(this, struct au1550nd_ctx,
 						chip);
 	int ce_override = 0, i;
@@ -440,7 +440,7 @@ static int au1550nd_probe(struct platform_device *pdev)
 	}
 
 	this = &ctx->chip;
-	mtd = nand_to_mtd(this);
+	mtd = rawnand_to_mtd(this);
 	mtd->dev.parent = &pdev->dev;
 
 	/* figure out which CS# r->start belongs to */
@@ -495,7 +495,7 @@ static int au1550nd_remove(struct platform_device *pdev)
 	struct au1550nd_ctx *ctx = platform_get_drvdata(pdev);
 	struct resource *r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
-	nand_release(nand_to_mtd(&ctx->chip));
+	nand_release(rawnand_to_mtd(&ctx->chip));
 	iounmap(ctx->base);
 	release_mem_region(r->start, 0x1000);
 	kfree(ctx);

@@ -48,7 +48,7 @@ struct fsl_upm_nand {
 
 static inline struct fsl_upm_nand *to_fsl_upm_nand(struct mtd_info *mtdinfo)
 {
-	return container_of(mtd_to_nand(mtdinfo), struct fsl_upm_nand,
+	return container_of(mtd_to_rawnand(mtdinfo), struct fsl_upm_nand,
 			    chip);
 }
 
@@ -66,7 +66,7 @@ static int fun_chip_ready(struct mtd_info *mtd)
 static void fun_wait_rnb(struct fsl_upm_nand *fun)
 {
 	if (fun->rnb_gpio[fun->mchip_number] >= 0) {
-		struct mtd_info *mtd = nand_to_mtd(&fun->chip);
+		struct mtd_info *mtd = rawnand_to_mtd(&fun->chip);
 		int cnt = 1000000;
 
 		while (--cnt && !fun_chip_ready(mtd))
@@ -80,7 +80,7 @@ static void fun_wait_rnb(struct fsl_upm_nand *fun)
 
 static void fun_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct fsl_upm_nand *fun = to_fsl_upm_nand(mtd);
 	u32 mar;
 
@@ -110,7 +110,7 @@ static void fun_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 
 static void fun_select_chip(struct mtd_info *mtd, int mchip_nr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct fsl_upm_nand *fun = to_fsl_upm_nand(mtd);
 
 	if (mchip_nr == -1) {
@@ -158,7 +158,7 @@ static int fun_chip_init(struct fsl_upm_nand *fun,
 			 const struct device_node *upm_np,
 			 const struct resource *io_res)
 {
-	struct mtd_info *mtd = nand_to_mtd(&fun->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(&fun->chip);
 	int ret;
 	struct device_node *flash_np;
 
@@ -322,7 +322,7 @@ err1:
 static int fun_remove(struct platform_device *ofdev)
 {
 	struct fsl_upm_nand *fun = dev_get_drvdata(&ofdev->dev);
-	struct mtd_info *mtd = nand_to_mtd(&fun->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(&fun->chip);
 	int i;
 
 	nand_release(mtd);

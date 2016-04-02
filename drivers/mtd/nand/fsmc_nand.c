@@ -327,13 +327,13 @@ struct fsmc_nand_data {
 
 static inline struct fsmc_nand_data *mtd_to_fsmc(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct fsmc_nand_data, nand);
+	return container_of(mtd_to_rawnand(mtd), struct fsmc_nand_data, nand);
 }
 
 /* Assert CS signal based on chipnr */
 static void fsmc_select_chip(struct mtd_info *mtd, int chipnr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct fsmc_nand_data *host;
 
 	host = mtd_to_fsmc(mtd);
@@ -362,7 +362,7 @@ static void fsmc_select_chip(struct mtd_info *mtd, int chipnr)
  */
 static void fsmc_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 	struct fsmc_nand_data *host = mtd_to_fsmc(mtd);
 	void __iomem *regs = host->regs_va;
 	unsigned int bank = host->bank;
@@ -629,7 +629,7 @@ unmap_dma:
 static void fsmc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 {
 	int i;
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	if (IS_ALIGNED((uint32_t)buf, sizeof(uint32_t)) &&
 			IS_ALIGNED(len, sizeof(uint32_t))) {
@@ -652,7 +652,7 @@ static void fsmc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 static void fsmc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
 	int i;
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 
 	if (IS_ALIGNED((uint32_t)buf, sizeof(uint32_t)) &&
 			IS_ALIGNED(len, sizeof(uint32_t))) {
@@ -779,7 +779,7 @@ static int fsmc_read_page_hwecc(struct mtd_info *mtd, struct nand_chip *chip,
 static int fsmc_bch8_correct_data(struct mtd_info *mtd, uint8_t *dat,
 			     uint8_t *read_ecc, uint8_t *calc_ecc)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct fsmc_nand_data *host = mtd_to_fsmc(mtd);
 	void __iomem *regs = host->regs_va;
 	unsigned int bank = host->bank;
@@ -1007,7 +1007,7 @@ static int __init fsmc_nand_probe(struct platform_device *pdev)
 		init_completion(&host->dma_access_complete);
 
 	/* Link all private pointers */
-	mtd = nand_to_mtd(&host->nand);
+	mtd = rawnand_to_mtd(&host->nand);
 	nand = &host->nand;
 	nand_set_controller_data(nand, host);
 	nand_set_flash_node(nand, np);
@@ -1200,7 +1200,7 @@ static int fsmc_nand_remove(struct platform_device *pdev)
 	struct fsmc_nand_data *host = platform_get_drvdata(pdev);
 
 	if (host) {
-		nand_release(nand_to_mtd(&host->nand));
+		nand_release(rawnand_to_mtd(&host->nand));
 
 		if (host->mode == USE_DMA_ACCESS) {
 			dma_release_channel(host->write_dma_chan);

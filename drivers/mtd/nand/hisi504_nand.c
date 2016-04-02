@@ -189,7 +189,7 @@ static void wait_controller_finished(struct hinfc_host *host)
 static void hisi_nfc_dma_transfer(struct hinfc_host *host, int todev)
 {
 	struct nand_chip *chip = &host->chip;
-	struct mtd_info	*mtd = nand_to_mtd(chip);
+	struct mtd_info	*mtd = rawnand_to_mtd(chip);
 	unsigned long val;
 	int ret;
 
@@ -261,7 +261,7 @@ static int hisi_nfc_send_cmd_pageprog(struct hinfc_host *host)
 
 static int hisi_nfc_send_cmd_readstart(struct hinfc_host *host)
 {
-	struct mtd_info	*mtd = nand_to_mtd(&host->chip);
+	struct mtd_info	*mtd = rawnand_to_mtd(&host->chip);
 
 	if ((host->addr_value[0] == host->cache_addr_value[0]) &&
 	    (host->addr_value[1] == host->cache_addr_value[1]))
@@ -356,7 +356,7 @@ static int hisi_nfc_send_cmd_reset(struct hinfc_host *host, int chipselect)
 
 static void hisi_nfc_select_chip(struct mtd_info *mtd, int chipselect)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 
 	if (chipselect < 0)
@@ -367,7 +367,7 @@ static void hisi_nfc_select_chip(struct mtd_info *mtd, int chipselect)
 
 static uint8_t hisi_nfc_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 
 	if (host->command == NAND_CMD_STATUS)
@@ -383,7 +383,7 @@ static uint8_t hisi_nfc_read_byte(struct mtd_info *mtd)
 
 static u16 hisi_nfc_read_word(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 
 	host->offset += 2;
@@ -393,7 +393,7 @@ static u16 hisi_nfc_read_word(struct mtd_info *mtd)
 static void
 hisi_nfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 
 	memcpy(host->buffer + host->offset, buf, len);
@@ -402,7 +402,7 @@ hisi_nfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 
 static void hisi_nfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 
 	memcpy(buf, host->buffer + host->offset, len);
@@ -411,7 +411,7 @@ static void hisi_nfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 
 static void set_addr(struct mtd_info *mtd, int column, int page_addr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 	unsigned int command = host->command;
 
@@ -447,7 +447,7 @@ static void set_addr(struct mtd_info *mtd, int column, int page_addr)
 static void hisi_nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		int page_addr)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct hinfc_host *host = nand_get_controller_data(chip);
 	int is_cache_invalid = 1;
 	unsigned int flag = 0;
@@ -641,7 +641,7 @@ static int hisi_nfc_ecc_probe(struct hinfc_host *host)
 	int size, strength, ecc_bits;
 	struct device *dev = host->dev;
 	struct nand_chip *chip = &host->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct device_node *np = host->dev->of_node;
 
 	size = of_get_nand_ecc_step_size(np);
@@ -710,7 +710,7 @@ static int hisi_nfc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, host);
 	chip = &host->chip;
-	mtd  = nand_to_mtd(chip);
+	mtd  = rawnand_to_mtd(chip);
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
@@ -819,7 +819,7 @@ err_res:
 static int hisi_nfc_remove(struct platform_device *pdev)
 {
 	struct hinfc_host *host = platform_get_drvdata(pdev);
-	struct mtd_info *mtd = nand_to_mtd(&host->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(&host->chip);
 
 	nand_release(mtd);
 

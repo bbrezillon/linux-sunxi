@@ -50,7 +50,7 @@ static void crisv32_hwcontrol(struct mtd_info *mtd, int cmd,
 {
 	unsigned long flags;
 	reg_gio_rw_pa_dout dout;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	local_irq_save(flags);
 
@@ -128,7 +128,7 @@ struct mtd_info *__init crisv32_nand_flash_probe(void)
 
 	/* Get pointer to private data */
 	this = &wrapper->chip;
-	crisv32_mtd = nand_to_mtd(this);
+	crisv32_mtd = rawnand_to_mtd(this);
 
 	pa_oe.oe |= 1 << CE_BIT;
 	pa_oe.oe |= 1 << ALE_BIT;

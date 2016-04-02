@@ -64,7 +64,7 @@ static inline void r852_write_reg_dword(struct r852_device *dev,
 /* returns pointer to our private structure */
 static inline struct r852_device *r852_get_dev(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	return nand_get_controller_data(chip);
 }
 
@@ -634,7 +634,7 @@ static void r852_update_media_status(struct r852_device *dev)
  */
 static int r852_register_nand_device(struct r852_device *dev)
 {
-	struct mtd_info *mtd = nand_to_mtd(dev->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(dev->chip);
 
 	WARN_ON(dev->card_registred);
 
@@ -669,7 +669,7 @@ error1:
 
 static void r852_unregister_nand_device(struct r852_device *dev)
 {
-	struct mtd_info *mtd = nand_to_mtd(dev->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(dev->chip);
 
 	if (!dev->card_registred)
 		return;
@@ -1025,7 +1025,7 @@ static int r852_suspend(struct device *device)
 static int r852_resume(struct device *device)
 {
 	struct r852_device *dev = pci_get_drvdata(to_pci_dev(device));
-	struct mtd_info *mtd = nand_to_mtd(dev->chip);
+	struct mtd_info *mtd = rawnand_to_mtd(dev->chip);
 
 	r852_disable_irqs(dev);
 	r852_card_update_present(dev);

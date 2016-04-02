@@ -65,7 +65,7 @@ struct jz4780_nand_chip {
 
 static inline struct jz4780_nand_chip *to_jz4780_nand_chip(struct mtd_info *mtd)
 {
-	return container_of(mtd_to_nand(mtd), struct jz4780_nand_chip, chip);
+	return container_of(mtd_to_rawnand(mtd), struct jz4780_nand_chip, chip);
 }
 
 static inline struct jz4780_nand_controller *to_jz4780_nand_controller(struct nand_hw_control *ctrl)
@@ -163,7 +163,7 @@ static int jz4780_nand_ecc_correct(struct mtd_info *mtd, u8 *dat,
 static int jz4780_nand_init_ecc(struct jz4780_nand_chip *nand, struct device *dev)
 {
 	struct nand_chip *chip = &nand->chip;
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_info *mtd = rawnand_to_mtd(chip);
 	struct jz4780_nand_controller *nfc = to_jz4780_nand_controller(chip->controller);
 	struct nand_ecclayout *layout = &nand->ecclayout;
 	u32 start, i;
@@ -273,7 +273,7 @@ static int jz4780_nand_init_chip(struct platform_device *pdev,
 	}
 
 	chip = &nand->chip;
-	mtd = nand_to_mtd(chip);
+	mtd = rawnand_to_mtd(chip);
 	mtd->name = devm_kasprintf(dev, GFP_KERNEL, "%s.%d", dev_name(dev),
 				   cs->bank);
 	if (!mtd->name)
@@ -319,7 +319,7 @@ static void jz4780_nand_cleanup_chips(struct jz4780_nand_controller *nfc)
 
 	while (!list_empty(&nfc->chips)) {
 		chip = list_first_entry(&nfc->chips, struct jz4780_nand_chip, chip_list);
-		nand_release(nand_to_mtd(&chip->chip));
+		nand_release(rawnand_to_mtd(&chip->chip));
 		list_del(&chip->chip_list);
 	}
 }

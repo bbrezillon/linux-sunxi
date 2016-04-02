@@ -51,7 +51,7 @@ static void crisv32_hwcontrol(struct mtd_info *mtd, int cmd,
 {
 	unsigned long flags;
 	reg_pio_rw_dout dout;
-	struct nand_chip *this = mtd_to_nand(mtd);
+	struct nand_chip *this = mtd_to_rawnand(mtd);
 
 	local_irq_save(flags);
 
@@ -147,7 +147,7 @@ struct mtd_info *__init crisv32_nand_flash_probe(void)
 
 	/* Get pointer to private data */
 	this = &wrapper->chip;
-	crisv32_mtd = nand_to_mtd(this);
+	crisv32_mtd = rawnand_to_mtd(this);
 
 	/* Set address of NAND IO lines */
 	this->IO_ADDR_R = read_cs;

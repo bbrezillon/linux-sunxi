@@ -31,7 +31,7 @@
 
 static inline struct spinand_state *mtd_to_state(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct spinand_info *info = nand_get_controller_data(chip);
 	struct spinand_state *state = info->priv;
 
@@ -746,7 +746,7 @@ static void spinand_reset(struct spi_device *spi_nand)
 static void spinand_cmdfunc(struct mtd_info *mtd, unsigned int command,
 			    int column, int page)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = mtd_to_rawnand(mtd);
 	struct spinand_info *info = nand_get_controller_data(chip);
 	struct spinand_state *state = info->priv;
 
@@ -906,7 +906,7 @@ static int spinand_probe(struct spi_device *spi_nand)
 	chip->options	|= NAND_CACHEPRG;
 	chip->select_chip = spinand_select_chip;
 
-	mtd = nand_to_mtd(chip);
+	mtd = rawnand_to_mtd(chip);
 
 	dev_set_drvdata(&spi_nand->dev, mtd);
 

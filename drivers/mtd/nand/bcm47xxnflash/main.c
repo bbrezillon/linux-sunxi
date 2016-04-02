@@ -35,7 +35,7 @@ static int bcm47xxnflash_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	nand_set_controller_data(&b47n->nand_chip, b47n);
-	mtd = nand_to_mtd(&b47n->nand_chip);
+	mtd = rawnand_to_mtd(&b47n->nand_chip);
 	mtd->dev.parent = &pdev->dev;
 	b47n->cc = container_of(nflash, struct bcma_drv_cc, nflash);
 
@@ -65,7 +65,7 @@ static int bcm47xxnflash_remove(struct platform_device *pdev)
 {
 	struct bcm47xxnflash *nflash = platform_get_drvdata(pdev);
 
-	nand_release(nand_to_mtd(&nflash->nand_chip));
+	nand_release(rawnand_to_mtd(&nflash->nand_chip));
 
 	return 0;
 }
