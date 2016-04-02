@@ -43,4 +43,14 @@ nand_get_mem_organization(const struct nand_device *nand)
 	return &nand->memorg;
 }
 
+static inline int nand_register(struct nand_device *nand)
+{
+	return mtd_device_register(&nand->mtd);
+}
+
+static inline void nand_unregister(struct nand_device *nand)
+{
+	mtd_device_unregister(&nand->mtd);
+}
+
 #endif /* __LINUX_MTD_NAND_H */
