@@ -3752,7 +3752,7 @@ static int nand_get_bits_per_cell(u8 cellinfo)
  * chip. The rest of the parameters must be decoded according to generic or
  * manufacturer-specific "extended ID" decoding patterns.
  */
-static void nand_decode_ext_id(struct nand_chip *chip)
+void nand_decode_ext_id(struct nand_chip *chip)
 {
 	struct mtd_info *mtd = nand_to_mtd(chip);
 	int extid, id_len = chip->id.len;
@@ -3877,6 +3877,7 @@ static void nand_decode_ext_id(struct nand_chip *chip)
 
 	}
 }
+EXPORT_SYMBOL_GPL(nand_decode_ext_id);
 
 /*
  * Old devices have chip data hardcoded in the device ID table. nand_decode_id
@@ -3988,7 +3989,7 @@ static int nand_detect(struct nand_chip *chip, struct nand_flash_dev *type)
 {
 	struct mtd_info *mtd = nand_to_mtd(chip);
 	int busw;
-	int i, maf_idx;
+	int i, maf_idx, ret;
 	u8 *id_data = chip->id.data;
 	u8 maf_id, dev_id;
 
@@ -4028,6 +4029,14 @@ static int nand_detect(struct nand_chip *chip, struct nand_flash_dev *type)
 	}
 
 	chip->id.len = nand_id_len(id_data, 8);
+
+	/* Try to identify manufacturer */
+	for (maf_idx = 0; nand_manuf_ids[maf_idx].id != 0x0; maf_idx++) {
+		if (nand_manuf_ids[maf_idx].id == maf_id)
+			break;
+	}
+
+	chip->manufacturer.ops = nand_manuf_ids[maf_idx].ops;
 
 	if (!type)
 		type = nand_flash_ids;
@@ -4076,8 +4085,14 @@ static int nand_detect(struct nand_chip *chip, struct nand_flash_dev *type)
 	chip->chipsize = (uint64_t)type->chipsize << 20;
 
 	if (!type->pagesize) {
-		/* Decode parameters from extended ID */
-		nand_decode_ext_id(chip);
+		/*
+		 * Try manufacturer detection if available and use
+		 * nand_decode_ext_id() otherwise.
+		 */
+		if (chip->manufacturer.ops->detect)
+			chip->manufacturer.ops->detect(chip);
+		else
+			nand_decode_ext_id(chip);
 	} else {
 		nand_decode_id(chip, type);
 	}
@@ -4091,12 +4106,6 @@ static int nand_detect(struct nand_chip *chip, struct nand_flash_dev *type)
 	if (maf_id != NAND_MFR_SAMSUNG && !type->pagesize)
 		chip->options &= ~NAND_SAMSUNG_LP_OPTIONS;
 ident_done:
-
-	/* Try to identify manufacturer */
-	for (maf_idx = 0; nand_manuf_ids[maf_idx].id != 0x0; maf_idx++) {
-		if (nand_manuf_ids[maf_idx].id == maf_id)
-			break;
-	}
 
 	if (chip->options & NAND_BUSWIDTH_AUTO) {
 		WARN_ON(busw & NAND_BUSWIDTH_16);
@@ -4136,6 +4145,15 @@ ident_done:
 	/* Do not replace user supplied command function! */
 	if (mtd->writesize > 512 && chip->cmdfunc == nand_command)
 		chip->cmdfunc = nand_command_lp;
+
+	/*
+	 * Manufacturer specific initialization.
+	 */
+	if (chip->manufacturer.ops && chip->manufacturer.ops->init) {
+		ret = chip->manufacturer.ops->init(chip);
+		if (ret)
+			return ret;
+	}
 
 	pr_info("device found, Manufacturer ID: 0x%02x, Chip ID: 0x%02x\n",
 		maf_id, dev_id);
@@ -4956,6 +4974,10 @@ void nand_cleanup(struct nand_chip *chip)
 	if (chip->badblock_pattern && chip->badblock_pattern->options
 			& NAND_BBT_DYNAMICSTRUCT)
 		kfree(chip->badblock_pattern);
+
+	/* Release manufacturer private data */
+	if (chip->manufacturer.ops && chip->manufacturer.ops->cleanup)
+		chip->manufacturer.ops->cleanup(chip);
 }
 EXPORT_SYMBOL_GPL(nand_cleanup);
 
