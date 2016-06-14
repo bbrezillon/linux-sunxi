@@ -513,6 +513,18 @@ static void hynix_nand_extract_ecc_requirements(struct nand_chip *chip,
 	}
 }
 
+static void hynix_nand_extract_timing_mode(struct nand_chip *chip,
+					   bool valid_jedecid)
+{
+	if (valid_jedecid) {
+		u8 nand_tech = chip->id.data[5] >> 4;
+
+		/* 1xnm technology */
+		if (nand_tech == 4)
+			chip->onfi_timing_mode_default = 2;
+	}
+}
+
 static void hynix_nand_extract_scrambling_requirements(struct nand_chip *chip,
 						       bool valid_jedecid)
 {
@@ -584,6 +596,7 @@ static void hynix_nand_decode_id(struct nand_chip *chip)
 	hynix_nand_extract_oobsize(chip, valid_jedecid);
 	hynix_nand_extract_ecc_requirements(chip, valid_jedecid);
 	hynix_nand_extract_scrambling_requirements(chip, valid_jedecid);
+	hynix_nand_extract_timing_mode(chip, valid_jedecid);
 }
 
 static void hynix_nand_cleanup(struct nand_chip *chip)
