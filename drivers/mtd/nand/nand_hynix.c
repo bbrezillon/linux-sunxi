@@ -525,6 +525,21 @@ static void hynix_nand_extract_timing_mode(struct nand_chip *chip,
 	}
 }
 
+static void hynix_nand_set_pairing_scheme(struct nand_chip *chip)
+{
+	bool valid_jedecid = hynix_nand_has_valid_jedecid(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+
+	if (valid_jedecid) {
+		u8 nand_tech = chip->id.data[5] >> 4;
+
+		/* 1xnm technology */
+		if (nand_tech == 4)
+			mtd->pairing = &dist3_pairing_scheme;
+	}
+}
+
+
 static void hynix_nand_extract_scrambling_requirements(struct nand_chip *chip,
 						       bool valid_jedecid)
 {
@@ -626,6 +641,8 @@ static int hynix_nand_init(struct nand_chip *chip)
 		return -ENOMEM;
 
 	nand_set_manufacturer_data(chip, hynix);
+
+	hynix_nand_set_pairing_scheme(chip);
 
 	ret = hynix_nand_rr_init(chip);
 	if (ret)
