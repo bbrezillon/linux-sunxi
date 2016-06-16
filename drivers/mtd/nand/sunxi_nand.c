@@ -330,7 +330,7 @@ static int sunxi_nfc_wait_events(struct sunxi_nfc *nfc, u32 events,
 		u32 status;
 
 		ret = readl_poll_timeout(nfc->regs + NFC_REG_ST, status,
-					 (status & events) == events, 0,
+					 (status & events) == events, 1,
 					 timeout_ms * 1000);
 	}
 
@@ -348,7 +348,7 @@ static int sunxi_nfc_wait_cmd_fifo_empty(struct sunxi_nfc *nfc)
 	int ret;
 
 	ret = readl_poll_timeout(nfc->regs + NFC_REG_ST, status,
-				 !(status & NFC_CMD_FIFO_STATUS), 0,
+				 !(status & NFC_CMD_FIFO_STATUS), 1,
 				 NFC_DEFAULT_TIMEOUT_MS * 1000);
 	if (ret)
 		dev_err(nfc->dev, "wait for empty cmd FIFO timedout\n");
