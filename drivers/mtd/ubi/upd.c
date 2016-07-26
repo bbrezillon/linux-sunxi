@@ -133,7 +133,7 @@ int ubi_start_update(struct ubi_device *ubi, struct ubi_volume *vol,
 	ubi_assert(!vol->updating && !vol->changing_leb);
 	vol->updating = 1;
 
-	vol->upd_buf = vmalloc(ubi->leb_size);
+	vol->upd_buf = vmalloc(vol->leb_size);
 	if (!vol->upd_buf)
 		return -ENOMEM;
 

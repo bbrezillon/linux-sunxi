@@ -206,8 +206,17 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 			goto out_unlock;
 		}
 
+	/*
+	 * Volume LEB size is currently PEB size - (size reserved for the EC
+	 * and VID headers). This will change with MLC/TLC NAND support and
+	 * the LEB consolidation concept.
+	 */
+	vol->leb_size = ubi->leb_size;
+
 	/* Calculate how many eraseblocks are requested */
-	vol->usable_leb_size = ubi->leb_size - ubi->leb_size % req->alignment;
+	vol->alignment = req->alignment;
+	vol->data_pad  = vol->leb_size % vol->alignment;
+	vol->usable_leb_size = vol->leb_size - vol->data_pad;
 	vol->reserved_pebs = div_u64(req->bytes + vol->usable_leb_size - 1,
 				     vol->usable_leb_size);
 
@@ -226,8 +235,6 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	spin_unlock(&ubi->volumes_lock);
 
 	vol->vol_id    = vol_id;
-	vol->alignment = req->alignment;
-	vol->data_pad  = ubi->leb_size % vol->alignment;
 	vol->vol_type  = req->vol_type;
 	vol->name_len  = req->name_len;
 	memcpy(vol->name, req->name, vol->name_len);
@@ -681,7 +688,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		ubi_err(ubi, "negative values");
 		goto fail;
 	}
-	if (vol->alignment > ubi->leb_size || vol->alignment == 0) {
+	if (vol->alignment > vol->leb_size || vol->alignment == 0) {
 		ubi_err(ubi, "bad alignment");
 		goto fail;
 	}
@@ -692,7 +699,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		goto fail;
 	}
 
-	n = ubi->leb_size % vol->alignment;
+	n = vol->leb_size % vol->alignment;
 	if (vol->data_pad != n) {
 		ubi_err(ubi, "bad data_pad, has to be %lld", n);
 		goto fail;
@@ -714,8 +721,8 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		goto fail;
 	}
 
-	n = ubi->leb_size - vol->data_pad;
-	if (vol->usable_leb_size != ubi->leb_size - vol->data_pad) {
+	n = vol->leb_size - vol->data_pad;
+	if (vol->usable_leb_size != n) {
 		ubi_err(ubi, "bad usable_leb_size, has to be %lld", n);
 		goto fail;
 	}

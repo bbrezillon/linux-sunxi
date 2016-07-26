@@ -552,7 +552,8 @@ static int init_volumes(struct ubi_device *ubi,
 		vol->vol_type = vtbl[i].vol_type == UBI_VID_DYNAMIC ?
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
 		vol->name_len = be16_to_cpu(vtbl[i].name_len);
-		vol->usable_leb_size = ubi->leb_size - vol->data_pad;
+		vol->leb_size = ubi->leb_size;
+		vol->usable_leb_size = vol->leb_size - vol->data_pad;
 		memcpy(vol->name, vtbl[i].name, vol->name_len);
 		vol->name[vol->name_len] = '\0';
 		vol->vol_id = i;
@@ -629,11 +630,12 @@ static int init_volumes(struct ubi_device *ubi,
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
 	memcpy(vol->name, UBI_LAYOUT_VOLUME_NAME, vol->name_len + 1);
-	vol->usable_leb_size = ubi->leb_size;
 	vol->used_ebs = vol->reserved_pebs;
 	vol->last_eb_bytes = vol->reserved_pebs;
+	vol->leb_size = ubi->leb_size;
+	vol->usable_leb_size = vol->leb_size;
 	vol->used_bytes =
-		(long long)vol->used_ebs * (ubi->leb_size - vol->data_pad);
+		(long long)vol->used_ebs * (vol->leb_size - vol->data_pad);
 	vol->vol_id = UBI_LAYOUT_VOLUME_ID;
 	vol->ref_count = 1;
 

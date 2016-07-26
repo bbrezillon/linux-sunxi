@@ -280,6 +280,7 @@ struct ubi_fm_pool {
  *
  * @reserved_pebs: how many physical eraseblocks are reserved for this volume
  * @vol_type: volume type (%UBI_DYNAMIC_VOLUME or %UBI_STATIC_VOLUME)
+ * @leb_size: logical eraseblock size
  * @usable_leb_size: logical eraseblock size without padding
  * @used_ebs: how many logical eraseblocks in this volume contain data
  * @last_eb_bytes: how many bytes are stored in the last logical eraseblock
@@ -329,6 +330,7 @@ struct ubi_volume {
 
 	int reserved_pebs;
 	int vol_type;
+	int leb_size;
 	int usable_leb_size;
 	int used_ebs;
 	int last_eb_bytes;
