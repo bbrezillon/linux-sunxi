@@ -1205,13 +1205,6 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 
 	dbg_wl("copy LEB %d:%d, PEB %d to PEB %d", vol_id, lnum, from, to);
 
-	if (vid_hdr->vol_type == UBI_VID_STATIC) {
-		data_size = be32_to_cpu(vid_hdr->data_size);
-		aldata_size = ALIGN(data_size, ubi->min_io_size);
-	} else
-		data_size = aldata_size =
-			    ubi->leb_size - be32_to_cpu(vid_hdr->data_pad);
-
 	idx = vol_id2idx(ubi, vol_id);
 	spin_lock(&ubi->volumes_lock);
 	/*
@@ -1260,6 +1253,13 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		err = MOVE_CANCEL_RACE;
 		goto out_unlock_leb;
 	}
+
+	if (vid_hdr->vol_type == UBI_VID_STATIC) {
+		data_size = be32_to_cpu(vid_hdr->data_size);
+		aldata_size = ALIGN(data_size, ubi->min_io_size);
+	} else
+		data_size = aldata_size =
+			    vol->leb_size - be32_to_cpu(vid_hdr->data_pad);
 
 	/*
 	 * OK, now the LEB is locked and we can safely start moving it. Since
