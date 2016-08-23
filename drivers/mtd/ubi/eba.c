@@ -1447,7 +1447,7 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 	int **scan_eba, **fm_eba;
 	struct ubi_ainf_volume *av;
 	struct ubi_volume *vol;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aleb;
 	struct rb_node *rb;
 
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
@@ -1488,15 +1488,15 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb)
-			scan_eba[i][aeb->lnum] = aeb->pnum;
+		ubi_rb_for_each_entry(rb, aleb, &av->root, node)
+			scan_eba[i][aleb->lnum] = aleb->peb->pnum;
 
 		av = ubi_find_av(ai_fastmap, idx2vol_id(ubi, i));
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb)
-			fm_eba[i][aeb->lnum] = aeb->pnum;
+		ubi_rb_for_each_entry(rb, aleb, &av->root, node)
+			fm_eba[i][aleb->lnum] = aleb->peb->pnum;
 
 		for (j = 0; j < vol->reserved_pebs; j++) {
 			if (scan_eba[i][j] != fm_eba[i][j]) {
@@ -1539,7 +1539,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	int i, err, num_volumes;
 	struct ubi_ainf_volume *av;
 	struct ubi_volume *vol;
-	struct ubi_ainf_peb *aeb;
+	struct ubi_ainf_leb *aleb;
 	struct rb_node *rb;
 
 	dbg_eba("initialize EBA sub-system");
@@ -1572,18 +1572,18 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		if (!av)
 			continue;
 
-		ubi_rb_for_each_entry(rb, aeb, &av->root, u.rb) {
-			if (aeb->lnum >= vol->reserved_pebs) {
+		ubi_rb_for_each_entry(rb, aleb, &av->root, node) {
+			if (aleb->lnum >= vol->reserved_pebs) {
 				/*
 				 * This may happen in case of an unclean reboot
 				 * during re-size.
 				 */
-				ubi_move_aeb_to_list(av, aeb, &ai->erase);
+				ubi_remove_aleb(av, aleb, &ai->erase);
 			} else {
 				struct ubi_eba_entry *entry;
 
-				entry = &vol->eba_tbl->entries[aeb->lnum];
-				entry->pnum = aeb->pnum;
+				entry = &vol->eba_tbl->entries[aleb->lnum];
+				entry->pnum = aleb->peb->pnum;
 			}
 		}
 	}
