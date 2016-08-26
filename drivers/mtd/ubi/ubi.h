@@ -567,6 +567,7 @@ struct ubi_device {
 	spinlock_t volumes_lock;
 	int ref_count;
 	int image_seq;
+	int version;
 
 	int rsvd_pebs;
 	int avail_pebs;

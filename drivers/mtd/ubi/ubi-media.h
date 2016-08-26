@@ -33,7 +33,10 @@
 #include <asm/byteorder.h>
 
 /* The version of UBI images supported by this implementation */
-#define UBI_VERSION 1
+#define UBI_CURRENT_VERSION		1
+#define UBI_SUPPORTS_VERSION(x)		BIT(x)
+#define UBI_SUPPORTED_VERSIONS		(UBI_SUPPORTS_VERSION(1))
+#define UBI_VERSION_IS_SUPPORTED(x)	(BIT((x)) & UBI_SUPPORTED_VERSIONS)
 
 /* The highest erase counter value supported by this implementation */
 #define UBI_MAX_ERASECOUNTER 0x7FFFFFFF
@@ -170,7 +173,8 @@ struct ubi_ec_hdr {
  * struct ubi_vid_hdr - on-flash UBI volume identifier header.
  * @magic: volume identifier header magic number (%UBI_VID_HDR_MAGIC)
  * @version: UBI implementation version which is supposed to accept this UBI
- *           image (%UBI_VERSION)
+ *           image (see %UBI_SUPPORTED_VERSIONS for the currently supported
+ *           versions)
  * @vol_type: volume type (%UBI_VID_DYNAMIC or %UBI_VID_STATIC)
  * @copy_flag: if this logical eraseblock was copied from another physical
  *             eraseblock (for wear-leveling reasons)
