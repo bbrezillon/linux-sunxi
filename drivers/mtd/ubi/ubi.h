@@ -166,6 +166,24 @@ enum {
 	POWER_CUT_VID_WRITE = 0x02,
 };
 
+/*
+ * IO modes.
+ *
+ * UBI_IO_MODE_NORMAL: Normal mode. For everything but MLC/TLC NANDs this is
+ *		       the only available mode. For MLC/TLC NANDs, data are
+ *		       read/written normally, without taking any precaution to
+ *		       ensure its reliability.
+ * UBI_IO_MODE_SLC: For everything but MLC/TLC NANDs passing this option as the
+ *		    same effect as passing %UBI_IO_MODE_NORMAL. For MLC/TLC
+ *		    NANDs this mode emulate the behavior of an SLC NAND by only
+ *		    writing part of the erase block to avoid 'paired page'
+ *		    corruption.
+ */
+enum ubi_io_mode {
+	UBI_IO_MODE_NORMAL,
+	UBI_IO_MODE_SLC,
+};
+
 /**
  * struct ubi_vid_io_buf - VID buffer used to read/write VID info to/from the
  *			   flash.
@@ -526,6 +544,9 @@ struct ubi_debug_info {
  * @flash_size: underlying MTD device size (in bytes)
  * @peb_count: count of physical eraseblocks on the MTD device
  * @peb_size: physical eraseblock size
+ * @max_lebs_per_peb: the maximum number of LEBs per PEB. Should always be 1
+ *		      except for MLC or TLC NANDs, where it should be equal
+ *		      to the number of bits per cell.
  * @bad_peb_limit: top limit of expected bad physical eraseblocks
  * @bad_peb_count: count of bad physical eraseblocks
  * @good_peb_count: count of good physical eraseblocks
@@ -632,6 +653,7 @@ struct ubi_device {
 	long long flash_size;
 	int peb_count;
 	int peb_size;
+	int max_lebs_per_peb;
 	int bad_peb_count;
 	int good_peb_count;
 	int corr_peb_count;
@@ -925,9 +947,9 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi);
 
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
-		int len);
+		int len, enum ubi_io_mode mode);
 int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
-		 int len);
+		 int len, enum ubi_io_mode mode);
 int ubi_io_sync_erase(struct ubi_device *ubi, int pnum, int torture);
 int ubi_io_is_bad(const struct ubi_device *ubi, int pnum);
 int ubi_io_mark_bad(const struct ubi_device *ubi, int pnum);
@@ -1129,10 +1151,11 @@ static inline struct ubi_vid_hdr *ubi_get_vid_hdr(struct ubi_vid_io_buf *vidb)
  * physical eraseblock.
  */
 static inline int ubi_io_read_data(const struct ubi_device *ubi, void *buf,
-				   int pnum, int offset, int len)
+				   int pnum, int offset, int len,
+				   enum ubi_io_mode mode)
 {
 	ubi_assert(offset >= 0);
-	return ubi_io_read(ubi, buf, pnum, offset + ubi->leb_start, len);
+	return ubi_io_read(ubi, buf, pnum, offset + ubi->leb_start, len, mode);
 }
 
 /*
@@ -1141,10 +1164,11 @@ static inline int ubi_io_read_data(const struct ubi_device *ubi, void *buf,
  * physical eraseblock.
  */
 static inline int ubi_io_write_data(struct ubi_device *ubi, const void *buf,
-				    int pnum, int offset, int len)
+				    int pnum, int offset, int len,
+				    enum ubi_io_mode mode)
 {
 	ubi_assert(offset >= 0);
-	return ubi_io_write(ubi, buf, pnum, offset + ubi->leb_start, len);
+	return ubi_io_write(ubi, buf, pnum, offset + ubi->leb_start, len, mode);
 }
 
 /**

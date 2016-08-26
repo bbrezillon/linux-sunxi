@@ -654,6 +654,7 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 
 	ubi->peb_size   = ubi->mtd->erasesize;
 	ubi->peb_count  = mtd_div_by_eb(ubi->mtd->size, ubi->mtd);
+	ubi->max_lebs_per_peb = mtd_pairing_groups_per_eb(ubi->mtd);
 	ubi->flash_size = ubi->mtd->size;
 
 	if (mtd_can_have_bb(ubi->mtd)) {

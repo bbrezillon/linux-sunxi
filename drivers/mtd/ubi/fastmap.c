@@ -876,7 +876,8 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		goto out;
 	}
 
-	ret = ubi_io_read_data(ubi, fmsb, fm_anchor, 0, sizeof(*fmsb));
+	ret = ubi_io_read_data(ubi, fmsb, fm_anchor, 0, sizeof(*fmsb),
+			       UBI_IO_MODE_NORMAL);
 	if (ret && ret != UBI_IO_BITFLIPS)
 		goto free_fm_sb;
 	else if (ret == UBI_IO_BITFLIPS)
@@ -997,7 +998,8 @@ int ubi_scan_fastmap(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			sqnum = be64_to_cpu(vh->sqnum);
 
 		ret = ubi_io_read_data(ubi, ubi->fm_buf + (ubi->leb_size * i),
-				       pnum, 0, ubi->leb_size);
+				       pnum, 0, ubi->leb_size,
+				       UBI_IO_MODE_NORMAL);
 		if (ret && ret != UBI_IO_BITFLIPS) {
 			ubi_err(ubi, "unable to read fastmap block# %i (PEB: %i, "
 				"err: %i)", i, pnum, ret);
@@ -1320,7 +1322,8 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 
 	for (i = 0; i < new_fm->used_blocks; i++) {
 		ret = ubi_io_write_data(ubi, fm_raw + (i * ubi->leb_size),
-					new_fm->e[i]->pnum, 0, ubi->leb_size);
+					new_fm->e[i]->pnum, 0, ubi->leb_size,
+					UBI_IO_MODE_NORMAL);
 		if (ret) {
 			ubi_err(ubi, "unable to write fastmap to PEB %i!",
 				new_fm->e[i]->pnum);
