@@ -958,6 +958,7 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	struct ubi_vid_hdr *vidh = ai->vidh;
 	long long ec;
 	int err, bitflips = 0, vol_id = -1, ec_err = 0;
+	int version = -1;
 
 	dbg_bld("scan PEB %d", pnum);
 
@@ -1007,12 +1008,8 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	if (!ec_err) {
 		int image_seq;
 
-		/* Make sure UBI version is OK */
-		if (ech->version != UBI_VERSION) {
-			ubi_err(ubi, "this UBI version is %d, image version is %d",
-				UBI_VERSION, (int)ech->version);
-			return -EINVAL;
-		}
+		/* Initialize the version value to the EC header one. */
+		version = ech->version;
 
 		ec = be64_to_cpu(ech->ec);
 		if (ec > UBI_MAX_ERASECOUNTER) {
@@ -1141,6 +1138,27 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return -EINVAL;
 	}
 
+	/*
+	 * version might be < 0 if the EC header is corrupted. In this case,
+	 * pick the version found in the VID header.
+	 */
+	if (version < 0)
+		version = vidh->version;
+
+	/* Make sure both VID header and EC header version value match. */
+	if (vidh->version != version) {
+		ubi_err(ubi,
+			"version in VID and EC headers do not match (%d %d)",
+			(int)vidh->version, (int)version);
+	}
+
+	/*
+	 * Initialize the UBI device version if it's the first valid PEB we are
+	 * scanning.
+	 */
+	if (ubi->version < 0)
+		ubi->version = version;
+
 	vol_id = be32_to_cpu(vidh->vol_id);
 	if (vol_id > UBI_MAX_VOLUMES && !vol_ignored(vol_id)) {
 		int lnum = be32_to_cpu(vidh->lnum);
@@ -1267,6 +1285,10 @@ static int late_analysis(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			ubi_msg(ubi, "empty MTD device detected");
 			get_random_bytes(&ubi->image_seq,
 					 sizeof(ubi->image_seq));
+
+			/* Initialize the version to the last supported version. */
+			if (ubi->version < 0)
+				ubi->version = UBI_CURRENT_VERSION;
 		} else {
 			ubi_err(ubi, "MTD device is not UBI-formatted and possibly contains non-UBI data - refusing it");
 			return -EINVAL;

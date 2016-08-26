@@ -658,6 +658,41 @@ int ubi_io_mark_bad(const struct ubi_device *ubi, int pnum)
 }
 
 /**
+ * validate_version - validate the version number found in the EC or VID
+ *		      header.
+ * @ubi: UBI device description object
+ * @version: version number to check
+ *
+ * This function returns zero if the version is supported by the UBI
+ * implementation and is consistent with previous version numbers found
+ * in other headers.
+ */
+static int validate_version(const struct ubi_device *ubi, int version)
+{
+	if (!UBI_VERSION_IS_SUPPORTED(version)) {
+		unsigned long supports = UBI_SUPPORTED_VERSIONS;
+		int i;
+
+		ubi_err(ubi, "node with incompatible UBI version found");
+		ubi_err(ubi, "\tversion version is %d", version);
+		ubi_err(ubi, "\tthis implementation supports:");
+		for_each_set_bit(i, &supports, 8)
+			ubi_err(ubi,"\t\t%d", i);
+
+		return -EINVAL;
+	}
+
+	if (ubi->version >= 0 && version != ubi->version) {
+		ubi_err(ubi,"node with inconsistent UBI version found");
+		ubi_err(ubi,"\tdevice version is %d", ubi->version);
+		ubi_err(ubi,"\theader version is %d", version);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
  * validate_ec_hdr - validate an erase counter header.
  * @ubi: UBI device description object
  * @ec_hdr: the erase counter header to check
@@ -675,9 +710,8 @@ static int validate_ec_hdr(const struct ubi_device *ubi,
 	vid_hdr_offset = be32_to_cpu(ec_hdr->vid_hdr_offset);
 	leb_start = be32_to_cpu(ec_hdr->data_offset);
 
-	if (ec_hdr->version != UBI_VERSION) {
-		ubi_err(ubi, "node with incompatible UBI version found: this UBI version is %d, image version is %d",
-			UBI_VERSION, (int)ec_hdr->version);
+	if (validate_version(ubi, ec_hdr->version)) {
+		ubi_err(ubi, "bad version in EC header");
 		goto bad;
 	}
 
@@ -848,7 +882,7 @@ int ubi_io_write_ec_hdr(struct ubi_device *ubi, int pnum,
 	ubi_assert(pnum >= 0 &&  pnum < ubi->peb_count);
 
 	ec_hdr->magic = cpu_to_be32(UBI_EC_HDR_MAGIC);
-	ec_hdr->version = UBI_VERSION;
+	ec_hdr->version = ubi->version;
 	ec_hdr->vid_hdr_offset = cpu_to_be32(ubi->vid_hdr_offset);
 	ec_hdr->data_offset = cpu_to_be32(ubi->leb_start);
 	ec_hdr->image_seq = cpu_to_be32(ubi->image_seq);
@@ -887,6 +921,11 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 	int data_pad = be32_to_cpu(vid_hdr->data_pad);
 	int data_crc = be32_to_cpu(vid_hdr->data_crc);
 	int usable_leb_size = ubi->leb_size - data_pad;
+
+	if (validate_version(ubi, vid_hdr->version)) {
+		ubi_err(ubi, "bad version in VID header");
+		goto bad;
+	}
 
 	if (copy_flag != 0 && copy_flag != 1) {
 		ubi_err(ubi, "bad copy_flag");
@@ -1106,7 +1145,7 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 		return err;
 
 	vid_hdr->magic = cpu_to_be32(UBI_VID_HDR_MAGIC);
-	vid_hdr->version = UBI_VERSION;
+	vid_hdr->version = ubi->version;
 	crc = crc32(UBI_CRC32_INIT, vid_hdr, UBI_VID_HDR_SIZE_CRC);
 	vid_hdr->hdr_crc = cpu_to_be32(crc);
 
