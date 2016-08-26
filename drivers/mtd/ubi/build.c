@@ -103,11 +103,13 @@ DEFINE_MUTEX(ubi_devices_mutex);
 /* Protects @ubi_devices and @ubi->ref_count */
 static DEFINE_SPINLOCK(ubi_devices_lock);
 
+#define UBI_ABI_VERSION		1
+
 /* "Show" method for files in '/<sysfs>/class/ubi/' */
 static ssize_t ubi_version_show(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", UBI_VERSION);
+	return sprintf(buf, "%d\n", UBI_ABI_VERSION);
 }
 
 /* UBI version attribute ('/<sysfs>/class/ubi/version') */
@@ -1490,7 +1492,7 @@ MODULE_PARM_DESC(fm_autoconvert, "Set this parameter to enable fastmap automatic
 module_param(fm_debug, bool, 0);
 MODULE_PARM_DESC(fm_debug, "Set this parameter to enable fastmap debugging by default. Warning, this will make fastmap slow!");
 #endif
-MODULE_VERSION(__stringify(UBI_VERSION));
+MODULE_VERSION(__stringify(UBI_ABI_VERSION));
 MODULE_DESCRIPTION("UBI - Unsorted Block Images");
 MODULE_AUTHOR("Artem Bityutskiy");
 MODULE_LICENSE("GPL");
