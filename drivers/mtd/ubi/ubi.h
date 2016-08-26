@@ -584,6 +584,7 @@ struct ubi_device {
 	struct mutex volumes_lock;
 	int ref_count;
 	int image_seq;
+	int version;
 
 	int rsvd_pebs;
 	int avail_pebs;

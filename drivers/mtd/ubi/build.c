@@ -926,6 +926,9 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	ubi->vid_hdr_offset = vid_hdr_offset;
 	ubi->autoresize_vol_id = -1;
 
+	/* Initialize the version to -1 to let UBI detect it at attach time. */
+	ubi->version = -1;
+
 #ifdef CONFIG_MTD_UBI_FASTMAP
 	ubi->fm_pool.used = ubi->fm_pool.size = 0;
 	ubi->fm_wl_pool.used = ubi->fm_wl_pool.size = 0;
