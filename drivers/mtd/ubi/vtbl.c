@@ -332,7 +332,8 @@ retry:
 		goto write_error;
 
 	/* Write the layout volume contents */
-	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size);
+	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size,
+				UBI_IO_MODE_NORMAL);
 	if (err)
 		goto write_error;
 
@@ -416,8 +417,8 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 			goto out_free;
 		}
 
-		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum, 0,
-				       ubi->vtbl_size);
+		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum,
+				       0, ubi->vtbl_size, UBI_IO_MODE_NORMAL);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an

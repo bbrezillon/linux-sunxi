@@ -99,15 +99,85 @@ static int self_check_peb_vid_hdr(const struct ubi_device *ubi, int pnum);
 static int self_check_vid_hdr(const struct ubi_device *ubi, int pnum,
 			      const struct ubi_vid_hdr *vid_hdr);
 static int self_check_write(struct ubi_device *ubi, const void *buf, int pnum,
-			    int offset, int len);
+			    int offset, int len, enum ubi_io_mode mode);
+
 
 /**
- * ubi_io_read - read data from a physical eraseblock.
+ * ubi_io_mtd_read - wrapper around mtd_read() to support normal and SLC reads.
  * @ubi: UBI device description object
  * @buf: buffer where to store the read data
  * @pnum: physical eraseblock number to read from
  * @offset: offset within the physical eraseblock from where to read
  * @len: how many bytes to read
+ * @read: number of bytes successfully read from the underlying MTD device
+ * @mode: I/O mode
+ *
+ * This function is a simple wrapper around mtd_read().
+ * When operating in normal mode, mtd_read() is called directly.
+ * When operating in SLC mode, the offset is adapted, and only the first page
+ * each pair is read.
+ */
+static int ubi_io_mtd_read(const struct ubi_device *ubi, void *buf, int pnum,
+			   int offset, int len, size_t *read,
+			   enum ubi_io_mode mode)
+{
+	loff_t addr = (loff_t)pnum * ubi->peb_size;
+	int wunitoffs, chunklen, err = 0, end = offset + len;
+	struct mtd_pairing_info info;
+
+	/*
+	 * Call mtd_read() directly if we're doing non-SLC read or interacting
+	 * with an SLC chip.
+	 */
+	if (mode == UBI_IO_MODE_NORMAL || ubi->max_lebs_per_peb == 1)
+		return mtd_read(ubi->mtd, addr + offset, len, read, buf);
+
+	wunitoffs = offset % ubi->mtd->writesize;
+	info.pair = offset / ubi->mtd->writesize;
+	info.group = 0;
+	*read = 0;
+
+	while (offset < end) {
+		int realoffs, ret;
+		size_t chunkread = 0;
+
+		chunklen = min_t(int, ubi->mtd->writesize - wunitoffs,
+				 end - offset);
+		realoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
+		realoffs *= ubi->mtd->writesize;
+		realoffs += wunitoffs;
+		ret = mtd_read(ubi->mtd, addr + realoffs, chunklen,
+			       &chunkread, buf);
+		*read += chunkread;
+		if (mtd_is_bitflip(ret)) {
+			if (!err)
+				err = -EUCLEAN;
+		} else if (mtd_is_eccerr(ret)) {
+			err = -EBADMSG;
+		} else if (ret) {
+			return ret;
+		}
+
+		offset += chunklen;
+		buf += chunklen;
+		info.pair++;
+
+		if (wunitoffs)
+			wunitoffs = 0;
+	}
+
+	return err;
+}
+
+/**
+ * ubi_io_read - read data from a physical eraseblock
+ * @ubi: UBI device description object
+ * @buf: buffer where to store the read data
+ * @pnum: physical eraseblock number to read from
+ * @offset: offset within the physical eraseblock from where to read
+ * @len: how many bytes to read
+ * @mode: I/O mode to use for this read. Only supports %UBI_IO_MODE_NORMAL and
+ *	  %UBI_IO_MODE_SLC for now.
  *
  * This function reads data from offset @offset of physical eraseblock @pnum
  * and stores the read data in the @buf buffer. The following return codes are
@@ -124,16 +194,19 @@ static int self_check_write(struct ubi_device *ubi, const void *buf, int pnum,
  * o other negative error codes in case of other errors.
  */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
-		int len)
+		int len, enum ubi_io_mode mode)
 {
-	int err, retries = 0;
+	int err, max_size, retries = 0;
 	size_t read;
-	loff_t addr;
+
+	max_size = ubi->peb_size;
+	if (mode == UBI_IO_MODE_SLC)
+		max_size /= ubi->max_lebs_per_peb;
 
 	dbg_io("read %d bytes from PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
-	ubi_assert(offset >= 0 && offset + len <= ubi->peb_size);
+	ubi_assert(offset >= 0 && offset + len <= max_size);
 	ubi_assert(len > 0);
 
 	err = self_check_not_bad(ubi, pnum);
@@ -162,9 +235,8 @@ int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
 	 */
 	*((uint8_t *)buf) ^= 0xFF;
 
-	addr = (loff_t)pnum * ubi->peb_size + offset;
 retry:
-	err = mtd_read(ubi->mtd, addr, len, &read, buf);
+	err = ubi_io_mtd_read(ubi, buf, pnum, offset, len, &read, mode);
 	if (err) {
 		const char *errstr = mtd_is_eccerr(err) ? " (ECC error)" : "";
 
@@ -216,12 +288,68 @@ retry:
 }
 
 /**
- * ubi_io_write - write data to a physical eraseblock.
+ * ubi_io_mtd_write - wrapper around mtd_write() to support normal and SLC
+ *		      modes.
  * @ubi: UBI device description object
  * @buf: buffer with the data to write
  * @pnum: physical eraseblock number to write to
  * @offset: offset within the physical eraseblock where to write
  * @len: how many bytes to write
+ * @mode: I/O mode
+ *
+ * This function is a simple wrapper around mtd_write().
+ * When operating in normal mode, mtd_write() is called directly.
+ * When operating in SLC mode, the offset is adapted, and only the first page
+ * each pair is written, so that a power-cut happening in the middle of a write
+ * operation can only corrupt a single page (the one being written). This is
+ * what we call SLC mode (it's actually emulating the SLC NAND behavior).
+ */
+static int ubi_io_mtd_write(struct ubi_device *ubi, const void *buf, int pnum,
+			    int offset, int len, size_t *written,
+			    enum ubi_io_mode mode)
+{
+	loff_t addr = (loff_t)pnum * ubi->peb_size;
+	int chunklen, err = 0, end = offset + len;
+	struct mtd_pairing_info info;
+
+	if (mode == UBI_IO_MODE_NORMAL || ubi->max_lebs_per_peb == 1)
+		return mtd_write(ubi->mtd, addr + offset, len, written, buf);
+
+	info.pair = offset / ubi->mtd->writesize;
+	info.group = 0;
+	*written = 0;
+
+	while (offset < end) {
+		int realoffs;
+		size_t chunkwritten = 0;
+
+		chunklen = min_t(int, ubi->mtd->writesize,
+				 end - offset);
+		realoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
+		realoffs *= ubi->mtd->writesize;
+		err = mtd_write(ubi->mtd, addr + realoffs, chunklen,
+				&chunkwritten, buf);
+		*written += chunkwritten;
+		if (err && !mtd_is_bitflip(err))
+			return err;
+
+		offset += chunklen;
+		buf += chunklen;
+		info.pair++;
+	}
+
+	return err;
+}
+
+/**
+ * ubi_io_write - write data to a physical eraseblock
+ * @ubi: UBI device description object
+ * @buf: buffer with the data to write
+ * @pnum: physical eraseblock number to write to
+ * @offset: offset within the physical eraseblock where to write
+ * @len: how many bytes to write
+ * mode: I/O mode to use for this write. Only supports %UBI_IO_MODE_NORMAL and
+ *	 %UBI_IO_MODE_SLC for now.
  *
  * This function writes @len bytes of data from buffer @buf to offset @offset
  * of physical eraseblock @pnum. If all the data were successfully written,
@@ -233,16 +361,20 @@ retry:
  * to the flash media, but may be some garbage.
  */
 int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
-		 int len)
+		 int len, enum ubi_io_mode mode)
 {
+	int max_size, rawoffs = offset, rawlen = len;
 	int err;
 	size_t written;
-	loff_t addr;
+
+	max_size = ubi->peb_size;
+	if (mode == UBI_IO_MODE_SLC)
+		max_size /= ubi->max_lebs_per_peb;
 
 	dbg_io("write %d bytes to PEB %d:%d", len, pnum, offset);
 
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
-	ubi_assert(offset >= 0 && offset + len <= ubi->peb_size);
+	ubi_assert(offset >= 0 && offset + len <= max_size);
 	ubi_assert(offset % ubi->hdrs_min_io_size == 0);
 	ubi_assert(len > 0 && len % ubi->hdrs_min_io_size == 0);
 
@@ -255,8 +387,23 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 	if (err)
 		return err;
 
+	if (mode == UBI_IO_MODE_SLC && ubi->max_lebs_per_peb > 1) {
+		struct mtd_pairing_info info;
+
+		info.pair = offset / ubi->mtd->writesize;
+		info.group = 0;
+		rawoffs = mtd_pairing_info_to_wunit(ubi->mtd, &info);
+		rawoffs *= ubi->mtd->writesize;
+
+		info.pair = (offset + len) / ubi->mtd->writesize;
+		info.group = 0;
+		rawlen = mtd_pairing_info_to_wunit(ubi->mtd, &info);
+		rawlen *= ubi->mtd->writesize;
+		rawlen -= rawoffs;
+	}
+
 	/* The area we are writing to has to contain all 0xFF bytes */
-	err = ubi_self_check_all_ff(ubi, pnum, offset, len);
+	err = ubi_self_check_all_ff(ubi, pnum, rawoffs, rawlen);
 	if (err)
 		return err;
 
@@ -280,8 +427,7 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 		return -EIO;
 	}
 
-	addr = (loff_t)pnum * ubi->peb_size + offset;
-	err = mtd_write(ubi->mtd, addr, len, &written, buf);
+	err = ubi_io_mtd_write(ubi, buf, pnum, offset, len, &written, mode);
 	if (err) {
 		ubi_err(ubi, "error %d while writing %d bytes to PEB %d:%d, written %zd bytes",
 			err, len, pnum, offset, written);
@@ -291,7 +437,7 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 		ubi_assert(written == len);
 
 	if (!err) {
-		err = self_check_write(ubi, buf, pnum, offset, len);
+		err = self_check_write(ubi, buf, pnum, offset, len, mode);
 		if (err)
 			return err;
 
@@ -299,10 +445,11 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 		 * Since we always write sequentially, the rest of the PEB has
 		 * to contain only 0xFF bytes.
 		 */
-		offset += len;
-		len = ubi->peb_size - offset;
-		if (len)
-			err = ubi_self_check_all_ff(ubi, pnum, offset, len);
+		rawoffs += rawlen;
+		rawlen = ubi->peb_size - rawoffs;
+		if (rawlen)
+			err = ubi_self_check_all_ff(ubi, pnum, rawoffs,
+						    rawlen);
 	}
 
 	return err;
@@ -424,7 +571,8 @@ static int torture_peb(struct ubi_device *ubi, int pnum)
 			goto out;
 
 		/* Make sure the PEB contains only 0xFF bytes */
-		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size,
+				  UBI_IO_MODE_NORMAL);
 		if (err)
 			goto out;
 
@@ -438,12 +586,14 @@ static int torture_peb(struct ubi_device *ubi, int pnum)
 
 		/* Write a pattern and check it */
 		memset(ubi->peb_buf, patterns[i], ubi->peb_size);
-		err = ubi_io_write(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		err = ubi_io_write(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size,
+				   UBI_IO_MODE_NORMAL);
 		if (err)
 			goto out;
 
 		memset(ubi->peb_buf, ~patterns[i], ubi->peb_size);
-		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size);
+		err = ubi_io_read(ubi, ubi->peb_buf, pnum, 0, ubi->peb_size,
+				  UBI_IO_MODE_NORMAL);
 		if (err)
 			goto out;
 
@@ -776,7 +926,8 @@ int ubi_io_read_ec_hdr(struct ubi_device *ubi, int pnum,
 	dbg_io("read EC header from PEB %d", pnum);
 	ubi_assert(pnum >= 0 && pnum < ubi->peb_count);
 
-	read_err = ubi_io_read(ubi, ec_hdr, pnum, 0, UBI_EC_HDR_SIZE);
+	read_err = ubi_io_read(ubi, ec_hdr, pnum, 0, UBI_EC_HDR_SIZE,
+			       UBI_IO_MODE_NORMAL);
 	if (read_err) {
 		if (read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
 			return read_err;
@@ -900,7 +1051,8 @@ int ubi_io_write_ec_hdr(struct ubi_device *ubi, int pnum,
 	if (ubi_dbg_power_cut(ubi, POWER_CUT_EC_WRITE))
 		return -EROFS;
 
-	err = ubi_io_write(ubi, ec_hdr, pnum, 0, ubi->ec_hdr_alsize);
+	err = ubi_io_write(ubi, ec_hdr, pnum, 0, ubi->ec_hdr_alsize,
+			   UBI_IO_MODE_NORMAL);
 	return err;
 }
 
@@ -1061,7 +1213,8 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 	ubi_assert(pnum >= 0 &&  pnum < ubi->peb_count);
 
 	read_err = ubi_io_read(ubi, p, pnum, ubi->vid_hdr_aloffset,
-			  ubi->vid_hdr_shift + UBI_VID_HDR_SIZE);
+			       ubi->vid_hdr_shift + UBI_VID_HDR_SIZE,
+			       UBI_IO_MODE_NORMAL);
 	if (read_err && read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
 		return read_err;
 
@@ -1161,7 +1314,7 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 		return -EROFS;
 
 	err = ubi_io_write(ubi, p, pnum, ubi->vid_hdr_aloffset,
-			   ubi->vid_hdr_alsize);
+			   ubi->vid_hdr_alsize, UBI_IO_MODE_NORMAL);
 	return err;
 }
 
@@ -1249,7 +1402,8 @@ static int self_check_peb_ec_hdr(const struct ubi_device *ubi, int pnum)
 	if (!ec_hdr)
 		return -ENOMEM;
 
-	err = ubi_io_read(ubi, ec_hdr, pnum, 0, UBI_EC_HDR_SIZE);
+	err = ubi_io_read(ubi, ec_hdr, pnum, 0, UBI_EC_HDR_SIZE,
+			  UBI_IO_MODE_NORMAL);
 	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
 		goto exit;
 
@@ -1339,7 +1493,7 @@ static int self_check_peb_vid_hdr(const struct ubi_device *ubi, int pnum)
 	vid_hdr = ubi_get_vid_hdr(vidb);
 	p = vidb->buffer;
 	err = ubi_io_read(ubi, p, pnum, ubi->vid_hdr_aloffset,
-			  ubi->vid_hdr_alsize);
+			  ubi->vid_hdr_alsize, UBI_IO_MODE_NORMAL);
 	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
 		goto exit;
 
@@ -1375,12 +1529,10 @@ exit:
  * match and a negative error code if not or in case of failure.
  */
 static int self_check_write(struct ubi_device *ubi, const void *buf, int pnum,
-			    int offset, int len)
+			    int offset, int len, enum ubi_io_mode mode)
 {
 	int err, i;
-	size_t read;
 	void *buf1;
-	loff_t addr = (loff_t)pnum * ubi->peb_size + offset;
 
 	if (!ubi_dbg_chk_io(ubi))
 		return 0;
@@ -1391,7 +1543,7 @@ static int self_check_write(struct ubi_device *ubi, const void *buf, int pnum,
 		return 0;
 	}
 
-	err = mtd_read(ubi->mtd, addr, len, &read, buf1);
+	err = ubi_io_read(ubi, buf1, pnum, offset, len, mode);
 	if (err && !mtd_is_bitflip(err))
 		goto out_free;
 

@@ -601,7 +601,8 @@ retry:
 		ubi_free_vid_buf(vidb);
 	}
 
-	err = ubi_io_read_data(ubi, buf, pnum, offset, len);
+	err = ubi_io_read_data(ubi, buf, pnum, offset, len,
+			       UBI_IO_MODE_NORMAL);
 	if (err) {
 		if (err == UBI_IO_BITFLIPS)
 			scrub = 1;
@@ -743,7 +744,8 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 
 	/* Read everything before the area where the write failure happened */
 	if (offset > 0) {
-		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset);
+		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset,
+				       UBI_IO_MODE_NORMAL);
 		if (err && err != UBI_IO_BITFLIPS)
 			goto out_unlock;
 	}
@@ -760,7 +762,8 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 	if (err)
 		goto out_unlock;
 
-	err = ubi_io_write_data(ubi, ubi->peb_buf, new_pnum, 0, data_size);
+	err = ubi_io_write_data(ubi, ubi->peb_buf, new_pnum, 0, data_size,
+				UBI_IO_MODE_NORMAL);
 
 out_unlock:
 	mutex_unlock(&ubi->buf_mutex);
@@ -867,7 +870,8 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 	}
 
 	if (len) {
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len);
+		err = ubi_io_write_data(ubi, buf, pnum, offset, len,
+					UBI_IO_MODE_NORMAL);
 		if (err) {
 			ubi_warn(ubi,
 				 "failed to write %d bytes at offset %d of LEB %d:%d, PEB %d",
@@ -923,7 +927,8 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		dbg_eba("write %d bytes at offset %d of LEB %d:%d, PEB %d",
 			len, offset, vol_id, lnum, pnum);
 
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len);
+		err = ubi_io_write_data(ubi, buf, pnum, offset, len,
+					UBI_IO_MODE_NORMAL);
 		if (err) {
 			ubi_warn(ubi, "failed to write data to PEB %d", pnum);
 			if (err == -EIO && ubi->bad_allowed)
@@ -1269,7 +1274,8 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	 */
 	mutex_lock(&ubi->buf_mutex);
 	dbg_wl("read %d bytes of data", aldata_size);
-	err = ubi_io_read_data(ubi, ubi->peb_buf, from, 0, aldata_size);
+	err = ubi_io_read_data(ubi, ubi->peb_buf, from, 0, aldata_size,
+			       UBI_IO_MODE_NORMAL);
 	if (err && err != UBI_IO_BITFLIPS) {
 		ubi_warn(ubi, "error %d while reading data from PEB %d",
 			 err, from);
@@ -1331,7 +1337,8 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	}
 
 	if (data_size > 0) {
-		err = ubi_io_write_data(ubi, ubi->peb_buf, to, 0, aldata_size);
+		err = ubi_io_write_data(ubi, ubi->peb_buf, to, 0, aldata_size,
+					UBI_IO_MODE_NORMAL);
 		if (err) {
 			if (err == -EIO)
 				err = MOVE_TARGET_WR_ERR;
