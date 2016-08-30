@@ -622,6 +622,15 @@ static int verify_mkvol_req(const struct ubi_device *ubi,
 	    req->vol_type != UBI_STATIC_VOLUME)
 		goto bad;
 
+	if (req->vol_mode != UBI_VOL_MODE_NORMAL &&
+	    req->vol_mode != UBI_VOL_MODE_SLC)
+		goto bad;
+
+	/* SLC mode is only supported by UBI version 2 and later. */
+	if (req->vol_mode == UBI_VOL_MODE_SLC &&
+	    ubi->version < 2)
+		goto bad;
+
 	if (req->alignment > ubi->leb_size)
 		goto bad;
 

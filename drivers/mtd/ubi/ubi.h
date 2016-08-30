@@ -324,6 +324,7 @@ struct ubi_eba_leb_desc {
  *
  * @reserved_pebs: how many physical eraseblocks are reserved for this volume
  * @vol_type: volume type (%UBI_DYNAMIC_VOLUME or %UBI_STATIC_VOLUME)
+ * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL or %UBI_VOL_MODE_SLC)
  * @leb_size: logical eraseblock size
  * @usable_leb_size: logical eraseblock size without padding
  * @used_ebs: how many logical eraseblocks in this volume contain data
@@ -374,6 +375,7 @@ struct ubi_volume {
 
 	int reserved_pebs;
 	int vol_type;
+	int vol_mode;
 	int leb_size;
 	int usable_leb_size;
 	int used_ebs;
@@ -718,6 +720,7 @@ struct ubi_ainf_peb {
  * @highest_lnum: highest logical eraseblock number in this volume
  * @leb_count: number of logical eraseblocks in this volume
  * @vol_type: volume type
+ * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL or %UBI_VOL_MODE_SLC)
  * @used_ebs: number of used logical eraseblocks in this volume (only for
  *            static volumes)
  * @last_data_size: amount of data in the last logical eraseblock of this
@@ -726,6 +729,7 @@ struct ubi_ainf_peb {
  * @data_pad: how many bytes at the end of logical eraseblocks of this volume
  *            are not used (due to volume alignment)
  * @compat: compatibility flags of this volume
+ * @mode: volume mode (see %UBI_NORMAL_MODE and %UBI_NORMAL_MODE)
  * @rb: link in the volume RB-tree
  * @root: root of the RB-tree containing all the eraseblock belonging to this
  *        volume (&struct ubi_ainf_peb objects)
@@ -738,6 +742,7 @@ struct ubi_ainf_volume {
 	int highest_lnum;
 	int leb_count;
 	int vol_type;
+	int vol_mode;
 	int used_ebs;
 	int last_data_size;
 	int data_pad;
@@ -1169,6 +1174,61 @@ static inline int ubi_io_write_data(struct ubi_device *ubi, const void *buf,
 {
 	ubi_assert(offset >= 0);
 	return ubi_io_write(ubi, buf, pnum, offset + ubi->leb_start, len, mode);
+}
+
+/**
+ * ubi_io_mode_from_vid_hdr - Extract the I/O mode from VID header information.
+ * @vid_hdr: VID header to extract information from
+ */
+static inline int ubi_io_mode_from_vid_hdr(const struct ubi_vid_hdr *vid_hdr)
+{
+	switch(vid_hdr->vol_mode) {
+	case UBI_VID_MODE_NORMAL:
+		return UBI_IO_MODE_NORMAL;
+	case UBI_VID_MODE_SLC:
+		return UBI_IO_MODE_SLC;
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+/**
+ * ubi_vol_mode_from_vid_hdr - Extract the volume mode from VID header
+ *			       information.
+ * @vid_hdr: VID header to extract information from
+ */
+static inline int ubi_vol_mode_from_vid_hdr(const struct ubi_vid_hdr *vid_hdr)
+{
+	switch(vid_hdr->vol_mode) {
+	case UBI_VID_MODE_NORMAL:
+		return UBI_VOL_MODE_NORMAL;
+	case UBI_VID_MODE_SLC:
+		return UBI_VOL_MODE_SLC;
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+/**
+ * ubi_vol_mode_to_io_mode - Convert volume mode into I/O mode.
+ * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL or %UBI_VOL_MODE_SLC)
+ */
+static inline int ubi_vol_mode_to_io_mode(int vol_mode)
+{
+	switch(vol_mode) {
+	case UBI_VOL_MODE_NORMAL:
+		return UBI_IO_MODE_NORMAL;
+	case UBI_VOL_MODE_SLC:
+		return UBI_IO_MODE_SLC;
+	default:
+		break;
+	}
+
+	return -EINVAL;
 }
 
 /**

@@ -39,6 +39,8 @@ static struct device_attribute attr_vol_reserved_ebs =
 	__ATTR(reserved_ebs, S_IRUGO, vol_attribute_show, NULL);
 static struct device_attribute attr_vol_type =
 	__ATTR(type, S_IRUGO, vol_attribute_show, NULL);
+static struct device_attribute attr_vol_mode =
+	__ATTR(mode, S_IRUGO, vol_attribute_show, NULL);
 static struct device_attribute attr_vol_name =
 	__ATTR(name, S_IRUGO, vol_attribute_show, NULL);
 static struct device_attribute attr_vol_corrupted =
@@ -95,6 +97,14 @@ static ssize_t vol_attribute_show(struct device *dev,
 		else
 			tp = "static";
 		ret = sprintf(buf, "%s\n", tp);
+	} else if (attr == &attr_vol_mode) {
+		const char *mode;
+
+		if (vol->vol_mode == UBI_VOL_MODE_SLC)
+			mode = "slc";
+		else
+			mode = "normal";
+		ret = sprintf(buf, "%s\n", mode);
 	} else if (attr == &attr_vol_name)
 		ret = sprintf(buf, "%s\n", vol->name);
 	else if (attr == &attr_vol_corrupted)
@@ -123,6 +133,7 @@ static ssize_t vol_attribute_show(struct device *dev,
 static struct attribute *volume_dev_attrs[] = {
 	&attr_vol_reserved_ebs.attr,
 	&attr_vol_type.attr,
+	&attr_vol_mode.attr,
 	&attr_vol_name.attr,
 	&attr_vol_corrupted.attr,
 	&attr_vol_alignment.attr,
@@ -186,9 +197,9 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 		req->vol_id = vol_id;
 	}
 
-	dbg_gen("create device %d, volume %d, %llu bytes, type %d, name %s",
+	dbg_gen("create device %d, volume %d, %llu bytes, type %d, mode %d, name %s",
 		ubi->ubi_num, vol_id, (unsigned long long)req->bytes,
-		(int)req->vol_type, req->name);
+		(int)req->vol_type, (int)req->vol_mode, req->name);
 
 	/* Ensure that this volume does not exist */
 	err = -EEXIST;
@@ -207,12 +218,12 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 			goto out_unlock;
 		}
 
-	/*
-	 * Volume LEB size is currently PEB size - (size reserved for the EC
-	 * and VID headers). This will change with MLC/TLC NAND support and
-	 * the LEB consolidation concept.
-	 */
-	vol->leb_size = ubi->leb_size;
+	/* LEB size is adapted when SLC mode is requested. */
+	if (req->vol_mode == UBI_VOL_MODE_SLC)
+		vol->leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
+				ubi->leb_start;
+	else
+		vol->leb_size = ubi->leb_size;
 
 	/* Calculate how many eraseblocks are requested */
 	vol->alignment = req->alignment;
@@ -237,6 +248,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 
 	vol->vol_id    = vol_id;
 	vol->vol_type  = req->vol_type;
+	vol->vol_mode  = req->vol_mode;
 	vol->name_len  = req->name_len;
 	memcpy(vol->name, req->name, vol->name_len);
 	vol->ubi = ubi;
@@ -305,6 +317,10 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 		vtbl_rec.vol_type = UBI_VID_DYNAMIC;
 	else
 		vtbl_rec.vol_type = UBI_VID_STATIC;
+	if (vol->vol_mode == UBI_VOL_MODE_SLC)
+		vtbl_rec.vol_mode = UBI_VID_MODE_SLC;
+	else
+		vtbl_rec.vol_mode = UBI_VID_MODE_NORMAL;
 	memcpy(vtbl_rec.name, vol->name, vol->name_len);
 
 	err = ubi_change_vtbl_record(ubi, vol_id, &vtbl_rec);
