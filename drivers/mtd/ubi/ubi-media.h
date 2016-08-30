@@ -33,9 +33,10 @@
 #include <asm/byteorder.h>
 
 /* The version of UBI images supported by this implementation */
-#define UBI_CURRENT_VERSION		1
+#define UBI_CURRENT_VERSION		2
 #define UBI_SUPPORTS_VERSION(x)		BIT(x)
-#define UBI_SUPPORTED_VERSIONS		(UBI_SUPPORTS_VERSION(1))
+#define UBI_SUPPORTED_VERSIONS		(UBI_SUPPORTS_VERSION(1) |	\
+					 UBI_SUPPORTS_VERSION(2))
 #define UBI_VERSION_IS_SUPPORTED(x)	(BIT((x)) & UBI_SUPPORTED_VERSIONS)
 
 /* The highest erase counter value supported by this implementation */
@@ -115,6 +116,26 @@ enum {
 	UBI_COMPAT_REJECT   = 5
 };
 
+/*
+ * Mode constants used by internal volumes.
+ *
+ * @UBI_VID_MODE_NORMAL: eraseblocks are used as is. All pages within a block
+ *			 are written. Safe to be used on all devices except
+ *			 MLC/TLC NANDs
+ * @UBI_VID_MODE_SLC: eraseblocks are used in SLC mode (this is a software
+ *		      emulation of an SLC NAND, not the hardware SLC mode
+ *		      which is sometime provided by NAND vendors). Only the
+ *		      first write-unit/page of each pair of pages is used,
+ *		      which makes this mode robust against 'paired page'
+ *		      corruption.
+ *		      In the other hand, this means UBI will only expose half
+ *		      the capacity of the NAND.
+ */
+enum {
+	UBI_VID_MODE_NORMAL,
+	UBI_VID_MODE_SLC,
+};
+
 /* Sizes of UBI headers */
 #define UBI_EC_HDR_SIZE  sizeof(struct ubi_ec_hdr)
 #define UBI_VID_HDR_SIZE sizeof(struct ubi_vid_hdr)
@@ -182,6 +203,7 @@ struct ubi_ec_hdr {
  *          %UBI_COMPAT_IGNORE, %UBI_COMPAT_PRESERVE, or %UBI_COMPAT_REJECT)
  * @vol_id: ID of this volume
  * @lnum: logical eraseblock number
+ * @vol_mode: mode of this volume (%UBI_VID_MODE_NORMAL or %UBI_VID_MODE_SLC)
  * @padding1: reserved for future, zeroes
  * @data_size: how many bytes of data this logical eraseblock contains
  * @used_ebs: total number of used logical eraseblocks in this volume
@@ -287,7 +309,8 @@ struct ubi_vid_hdr {
 	__u8    compat;
 	__be32  vol_id;
 	__be32  lnum;
-	__u8    padding1[4];
+	__u8	vol_mode;
+	__u8    padding1[3];
 	__be32  data_size;
 	__be32  used_ebs;
 	__be32  data_pad;
@@ -339,6 +362,7 @@ struct ubi_vid_hdr {
  * @name_len: volume name length
  * @name: the volume name
  * @flags: volume flags (%UBI_VTBL_AUTORESIZE_FLG)
+ * @vol_mode: volume mode (%UBI_VID_MODE_NORMAL or %UBI_VID_MODE_SLC)
  * @padding: reserved, zeroes
  * @crc: a CRC32 checksum of the record
  *
@@ -375,7 +399,8 @@ struct ubi_vtbl_record {
 	__be16  name_len;
 	__u8    name[UBI_VOL_NAME_MAX+1];
 	__u8    flags;
-	__u8    padding[23];
+	__u8	vol_mode;
+	__u8    padding[22];
 	__be32  crc;
 } __packed;
 

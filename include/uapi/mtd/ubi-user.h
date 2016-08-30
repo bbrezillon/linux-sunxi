@@ -224,6 +224,26 @@ enum {
 };
 
 /*
+ * UBI volume mode constants.
+ *
+ * @UBI_VOL_MODE_NORMAL: eraseblocks are used as is. All pages within a block
+ *			 are written. Safe to be used on all devices except
+ *			 MLC/TLC NANDs
+ * @UBI_VOL_MODE_SLC: eraseblocks are used in SLC mode (this is a software
+ *		      emulation of an SLC NAND, not the hardware SLC mode
+ *		      which is sometime provided by NAND vendors). Only the
+ *		      first write-unit/page of each pair of pages is used,
+ *		      which makes this mode robust against 'paired page'
+ *		      corruption.
+ *		      In the other hand, this means UBI will only expose half
+ *		      the capacity of the NAND.
+ */
+enum {
+	UBI_VOL_MODE_NORMAL,
+	UBI_VOL_MODE_SLC,
+};
+
+/*
  * UBI set volume property ioctl constants.
  *
  * @UBI_VOL_PROP_DIRECT_WRITE: allow (any non-zero value) or disallow (value 0)
@@ -291,7 +311,7 @@ struct ubi_attach_req {
  * @alignment: volume alignment
  * @bytes: volume size in bytes
  * @vol_type: volume type (%UBI_DYNAMIC_VOLUME or %UBI_STATIC_VOLUME)
- * @padding1: reserved for future, not used, has to be zeroed
+ * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL or %UBI_VOL_MODE_SLC)
  * @name_len: volume name length
  * @padding2: reserved for future, not used, has to be zeroed
  * @name: volume name
@@ -320,7 +340,7 @@ struct ubi_mkvol_req {
 	__s32 alignment;
 	__s64 bytes;
 	__s8 vol_type;
-	__s8 padding1;
+	__s8 vol_mode;
 	__s16 name_len;
 	__s8 padding2[4];
 	char name[UBI_MAX_VOLUME_NAME + 1];
