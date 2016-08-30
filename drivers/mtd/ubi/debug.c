@@ -85,6 +85,7 @@ void ubi_dump_vid_hdr(const struct ubi_vid_hdr *vid_hdr)
 	pr_err("\tmagic     %08x\n", be32_to_cpu(vid_hdr->magic));
 	pr_err("\tversion   %d\n",  (int)vid_hdr->version);
 	pr_err("\tvol_type  %d\n",  (int)vid_hdr->vol_type);
+	pr_err("\tvol_mode  %d\n",  (int)vid_hdr->vol_mode);
 	pr_err("\tcopy_flag %d\n",  (int)vid_hdr->copy_flag);
 	pr_err("\tcompat    %d\n",  (int)vid_hdr->compat);
 	pr_err("\tvol_id    %d\n",  be32_to_cpu(vid_hdr->vol_id));
@@ -112,6 +113,7 @@ void ubi_dump_vol_info(const struct ubi_volume *vol)
 	pr_err("\talignment       %d\n", vol->alignment);
 	pr_err("\tdata_pad        %d\n", vol->data_pad);
 	pr_err("\tvol_type        %d\n", vol->vol_type);
+	pr_err("\tvol_mode        %d\n", vol->vol_mode);
 	pr_err("\tname_len        %d\n", vol->name_len);
 	pr_err("\tusable_leb_size %d\n", vol->usable_leb_size);
 	pr_err("\tused_ebs        %d\n", vol->used_ebs);
@@ -144,6 +146,7 @@ void ubi_dump_vtbl_record(const struct ubi_vtbl_record *r, int idx)
 	pr_err("\talignment       %d\n", be32_to_cpu(r->alignment));
 	pr_err("\tdata_pad        %d\n", be32_to_cpu(r->data_pad));
 	pr_err("\tvol_type        %d\n", (int)r->vol_type);
+	pr_err("\tvol_mode        %d\n", (int)r->vol_mode);
 	pr_err("\tupd_marker      %d\n", (int)r->upd_marker);
 	pr_err("\tname_len        %d\n", name_len);
 
@@ -210,6 +213,7 @@ void ubi_dump_mkvol_req(const struct ubi_mkvol_req *req)
 	pr_err("\talignment %d\n",   req->alignment);
 	pr_err("\tbytes     %lld\n", (long long)req->bytes);
 	pr_err("\tvol_type  %d\n",   req->vol_type);
+	pr_err("\tvol_mode  %d\n",   req->vol_mode);
 	pr_err("\tname_len  %d\n",   req->name_len);
 
 	memcpy(nm, req->name, 16);

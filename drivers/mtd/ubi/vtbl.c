@@ -171,7 +171,7 @@ static int vtbl_check(const struct ubi_device *ubi,
 		      const struct ubi_vtbl_record *vtbl)
 {
 	int i, n, reserved_pebs, alignment, data_pad, vol_type, name_len;
-	int upd_marker, err;
+	int vol_mode, upd_marker, err;
 	uint32_t crc;
 	const char *name;
 
@@ -183,6 +183,7 @@ static int vtbl_check(const struct ubi_device *ubi,
 		data_pad = be32_to_cpu(vtbl[i].data_pad);
 		upd_marker = vtbl[i].upd_marker;
 		vol_type = vtbl[i].vol_type;
+		vol_mode = vtbl[i].vol_mode;
 		name_len = be16_to_cpu(vtbl[i].name_len);
 		name = &vtbl[i].name[0];
 
@@ -258,6 +259,12 @@ static int vtbl_check(const struct ubi_device *ubi,
 			err = 12;
 			goto bad;
 		}
+
+		if (vol_mode != UBI_VID_MODE_NORMAL &&
+		    vol_mode != UBI_VID_MODE_SLC) {
+			err = 13;
+			goto bad;
+		}
 	}
 
 	/* Checks that all names are unique */
@@ -302,6 +309,7 @@ static int create_vtbl(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	struct ubi_ainf_peb *new_aeb;
+	enum ubi_io_mode io_mode;
 
 	dbg_gen("create volume table (copy #%d)", copy + 1);
 
@@ -316,6 +324,14 @@ retry:
 	if (IS_ERR(new_aeb)) {
 		err = PTR_ERR(new_aeb);
 		goto out_free;
+	}
+
+	if (ubi->version > 1 && ubi->max_lebs_per_peb) {
+		vid_hdr->vol_mode = UBI_VID_MODE_SLC;
+		io_mode = UBI_IO_MODE_SLC;
+	} else {
+		vid_hdr->vol_mode = UBI_VID_MODE_NORMAL;
+		io_mode = UBI_IO_MODE_NORMAL;
 	}
 
 	vid_hdr->vol_type = UBI_LAYOUT_VOLUME_TYPE;
@@ -333,7 +349,7 @@ retry:
 
 	/* Write the layout volume contents */
 	err = ubi_io_write_data(ubi, vtbl, new_aeb->pnum, 0, ubi->vtbl_size,
-				UBI_IO_MODE_NORMAL);
+				io_mode);
 	if (err)
 		goto write_error;
 
@@ -381,6 +397,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 	struct ubi_ainf_peb *aeb;
 	struct ubi_vtbl_record *leb[UBI_LAYOUT_VOLUME_EBS] = { NULL, NULL };
 	int leb_corrupted[UBI_LAYOUT_VOLUME_EBS] = {1, 1};
+	enum ubi_io_mode io_mode;
 
 	/*
 	 * UBI goes through the following steps when it changes the layout
@@ -407,6 +424,8 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 	 *    to LEB 0.
 	 */
 
+	io_mode = ubi_vol_mode_to_io_mode(av->vol_mode);
+
 	dbg_gen("check layout volume");
 
 	/* Read both LEB 0 and LEB 1 into memory */
@@ -418,7 +437,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 		}
 
 		err = ubi_io_read_data(ubi, leb[aeb->lnum], aeb->pnum,
-				       0, ubi->vtbl_size, UBI_IO_MODE_NORMAL);
+				       0, ubi->vtbl_size, io_mode);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an
@@ -555,8 +574,16 @@ static int init_volumes(struct ubi_device *ubi,
 		vol->upd_marker = vtbl[i].upd_marker;
 		vol->vol_type = vtbl[i].vol_type == UBI_VID_DYNAMIC ?
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
+		if (vtbl[i].vol_mode == UBI_VID_MODE_SLC) {
+			vol->vol_mode = UBI_VOL_MODE_SLC;
+			vol->leb_size = (ubi->peb_size /
+					 ubi->max_lebs_per_peb) -
+					ubi->leb_start;
+		} else {
+			vol->vol_mode = UBI_VOL_MODE_NORMAL;
+			vol->leb_size = ubi->leb_size;
+		}
 		vol->name_len = be16_to_cpu(vtbl[i].name_len);
-		vol->leb_size = ubi->leb_size;
 		vol->usable_leb_size = vol->leb_size - vol->data_pad;
 		memcpy(vol->name, vtbl[i].name, vol->name_len);
 		vol->name[vol->name_len] = '\0';
@@ -629,14 +656,22 @@ static int init_volumes(struct ubi_device *ubi,
 	if (!vol)
 		return -ENOMEM;
 
+	av = ubi_find_av(ai, UBI_LAYOUT_VOLUME_ID);
+	ubi_assert(av);
+
 	vol->reserved_pebs = UBI_LAYOUT_VOLUME_EBS;
 	vol->alignment = UBI_LAYOUT_VOLUME_ALIGN;
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
+	vol->vol_mode = av->vol_mode;
+	if (vol->vol_mode == UBI_VOL_MODE_SLC)
+		vol->leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
+				ubi->leb_start;
+	else
+		vol->leb_size = ubi->leb_size;
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
 	memcpy(vol->name, UBI_LAYOUT_VOLUME_NAME, vol->name_len + 1);
 	vol->used_ebs = vol->reserved_pebs;
 	vol->last_eb_bytes = vol->reserved_pebs;
-	vol->leb_size = ubi->leb_size;
 	vol->usable_leb_size = vol->leb_size;
 	vol->used_bytes =
 		(long long)vol->used_ebs * (vol->leb_size - vol->data_pad);

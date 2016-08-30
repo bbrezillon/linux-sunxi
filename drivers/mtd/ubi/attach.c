@@ -149,6 +149,7 @@ static struct ubi_ainf_volume *find_or_add_av(struct ubi_attach_info *ai,
 		return ERR_PTR(-ENOMEM);
 
 	av->vol_id = vol_id;
+	av->vol_mode = -1;
 
 	if (vol_id > ai->highest_vol_id)
 		ai->highest_vol_id = vol_id;
@@ -455,6 +456,7 @@ int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_peb *aeb,
 	uint32_t data_crc, crc;
 	struct ubi_vid_io_buf *vidb = NULL;
 	unsigned long long sqnum2 = be64_to_cpu(vid_hdr->sqnum);
+	enum ubi_io_mode io_mode;
 
 	if (sqnum2 == aeb->sqnum) {
 		/*
@@ -522,9 +524,10 @@ int ubi_compare_lebs(struct ubi_device *ubi, const struct ubi_ainf_peb *aeb,
 
 	len = be32_to_cpu(vid_hdr->data_size);
 
+	io_mode = ubi_io_mode_from_vid_hdr(vid_hdr);
+
 	mutex_lock(&ubi->buf_mutex);
-	err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, len,
-			       UBI_IO_MODE_NORMAL);
+	err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, len, io_mode);
 	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
 		goto out_unlock;
 
@@ -577,13 +580,14 @@ out_free_vidh:
 int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai, int pnum,
 		  int ec, const struct ubi_vid_hdr *vid_hdr, int bitflips)
 {
-	int err, vol_id, lnum;
+	int err, vol_id, vol_mode, lnum;
 	unsigned long long sqnum;
 	struct ubi_ainf_volume *av;
 	struct ubi_ainf_peb *aeb;
 	struct rb_node **p, *parent = NULL;
 
 	vol_id = be32_to_cpu(vid_hdr->vol_id);
+	vol_mode = ubi_vol_mode_from_vid_hdr(vid_hdr);
 	lnum = be32_to_cpu(vid_hdr->lnum);
 	sqnum = be64_to_cpu(vid_hdr->sqnum);
 
@@ -593,6 +597,17 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai, int pnum,
 	av = add_volume(ai, vol_id, pnum, vid_hdr);
 	if (IS_ERR(av))
 		return PTR_ERR(av);
+
+	/* Assign the volume mode if it's just been created. */
+	if (av->vol_mode < 0)
+		av->vol_mode = vol_mode;
+
+	/* All VID headers in a given volume should expose the same mode. */
+	if (vol_mode != av->vol_mode) {
+		ubi_err(ubi, "invalid mode detected: got %d expected %d",
+			vid_hdr->vol_mode, av->vol_mode);
+		return -EINVAL;
+	}
 
 	if (ai->max_sqnum < sqnum)
 		ai->max_sqnum = sqnum;
