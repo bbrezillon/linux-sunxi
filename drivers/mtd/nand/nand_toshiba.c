@@ -39,6 +39,8 @@ static int toshiba_nand_init(struct nand_chip *chip)
 	if (nand_is_slc(chip))
 		chip->bbt_options |= NAND_BBT_SCAN2NDPAGE;
 
+	nand_to_mtd(chip)->pairing = &dist3_pairing_scheme;
+	chip->onfi_timing_mode_default = 3;
 	return 0;
 }
 
