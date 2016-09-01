@@ -130,10 +130,16 @@ enum {
  *		      corruption.
  *		      In the other hand, this means UBI will only expose half
  *		      the capacity of the NAND.
+ * @UBI_VID_MODE_MLC_SAFE: eraseblocks are used in SLC mode when they are being
+ *			   written and are consolidated in MLC mode in
+ *			   background. This allows us to maximize storage
+ *			   utilization while keeping it robust against paired
+ *			   page corruption
  */
 enum {
 	UBI_VID_MODE_NORMAL,
 	UBI_VID_MODE_SLC,
+	UBI_VID_MODE_MLC_SAFE,
 };
 
 /* Sizes of UBI headers */
@@ -204,6 +210,7 @@ struct ubi_ec_hdr {
  * @vol_id: ID of this volume
  * @lnum: logical eraseblock number
  * @vol_mode: mode of this volume (%UBI_VID_MODE_NORMAL or %UBI_VID_MODE_SLC)
+ * @lpos: LEB position in the PEB.
  * @padding1: reserved for future, zeroes
  * @data_size: how many bytes of data this logical eraseblock contains
  * @used_ebs: total number of used logical eraseblocks in this volume
@@ -310,7 +317,11 @@ struct ubi_vid_hdr {
 	__be32  vol_id;
 	__be32  lnum;
 	__u8	vol_mode;
-	__u8    padding1[3];
+	union {
+		__u8	lpos;
+		__u8	consolidated;
+	};
+	__u8    padding1[2];
 	__be32  data_size;
 	__be32  used_ebs;
 	__be32  data_pad;
