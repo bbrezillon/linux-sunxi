@@ -49,6 +49,24 @@
 /* Number of physical eraseblocks reserved for atomic LEB change operation */
 #define EBA_RESERVED_PEBS 1
 
+struct ubi_eba_table_ops {
+	struct ubi_eba_table *(*create)(struct ubi_volume *vol, int nentries);
+	void (*destroy)(struct ubi_eba_table *tbl);
+	void (*copy)(struct ubi_volume *vol, struct ubi_eba_table *dst,
+		     int nentries);
+	int (*get_peb)(struct ubi_volume *vol);
+	void (*get_ldesc)(struct ubi_volume *vol, int lnum,
+			  struct ubi_eba_leb_desc *ldesc);
+	bool (*invalidate_entry)(struct ubi_volume *vol,
+				 const struct ubi_eba_leb_desc *ldesc);
+	void (*update_entry)(struct ubi_volume *vol,
+			     const struct ubi_eba_leb_desc *ldesc);
+};
+
+struct ubi_eba_table {
+	const struct ubi_eba_table_ops *ops;
+};
+
 /**
  * struct ubi_eba_entry - structure encoding a single LEB -> PEB association
  * @pnum: the physical eraseblock number attached to the LEB
@@ -61,17 +79,71 @@ struct ubi_eba_entry {
 	int pnum;
 };
 
+struct ubi_eba_normal_table {
+	struct ubi_eba_table base;
+	struct ubi_eba_entry *entries;
+};
+
+static inline struct ubi_eba_normal_table *
+to_normal_table(struct ubi_eba_table *tbl)
+{
+	return container_of(tbl, struct ubi_eba_normal_table, base);
+}
+
+/**
+ * struct ubi_consolidated_peb - structure storing consolidated PEB information
+ * @pnum: the physical eraseblock number
+ * @lnums: the LEBs stored in this PEB
+ */
+struct ubi_consolidated_peb {
+	int pnum;
+	int lnums[];
+};
+
+/**
+ * struct ubi_eba_mlc_entry - structure encoding a LEB -> PEB for MLC_SAFE
+ *			      volumes.
+ * @node: used to classify the LEB in one of the category
+ * @pnum: the physical eraseblock number attached to the LEB
+ * @cpeb: PEB information when the LEB has been consolidated
+ *
+ * This structure is encoding a LEB -> PEB association.
+ */
+struct ubi_eba_mlc_entry {
+	struct list_head node;
+	union {
+		int pnum;
+		struct ubi_consolidated_peb *cpeb;
+	};
+};
+
 /**
  * struct ubi_eba_table - LEB -> PEB association information
  * @entries: the LEB to PEB mapping (one entry per LEB).
+ * @consolidated: bitmap encoding whether a LEB has been consolidated or not
  *
  * This structure is private to the EBA logic and should be kept here.
  * It is encoding the LEB to PEB association table, and is subject to
  * changes.
  */
-struct ubi_eba_table {
-	struct ubi_eba_entry *entries;
+struct ubi_eba_mlc_table {
+	struct ubi_eba_table base;
+	struct ubi_eba_mlc_entry *entries;
+	unsigned long *consolidated;
+	struct list_head open;
+	struct {
+		struct list_head clean;
+		struct list_head *dirty;
+	} closed;
+	int free_pebs;
+	struct mutex lock;
 };
+
+static inline struct ubi_eba_mlc_table *
+to_mlc_table(struct ubi_eba_table *tbl)
+{
+	return container_of(tbl, struct ubi_eba_mlc_table, base);
+}
 
 /**
  * next_sqnum - get next sequence number.
@@ -107,36 +179,209 @@ static int ubi_get_compat(const struct ubi_device *ubi, int vol_id)
 	return 0;
 }
 
-/**
- * ubi_eba_get_ldesc - get information about a LEB
- * @vol: volume description object
- * @lnum: logical eraseblock number
- * @ldesc: the LEB descriptor to fill
- *
- * Used to query information about a specific LEB.
- * It is currently only returning the physical position of the LEB, but will be
- * extended to provide more information.
- */
-void ubi_eba_get_ldesc(struct ubi_volume *vol, int lnum,
-		       struct ubi_eba_leb_desc *ldesc)
+static int ubi_eba_normal_get_peb(struct ubi_volume *vol)
 {
-	ldesc->lnum = lnum;
-	ldesc->pnum = vol->eba_tbl->entries[lnum].pnum;
+	return ubi_wl_get_peb(vol->ubi);
 }
 
-/**
- * ubi_eba_create_table - allocate a new EBA table and initialize it with all
- *			  LEBs unmapped
- * @vol: volume containing the EBA table to copy
- * @nentries: number of entries in the table
- *
- * Allocate a new EBA table and initialize it with all LEBs unmapped.
- * Returns a valid pointer if it succeed, an ERR_PTR() otherwise.
- */
-struct ubi_eba_table *ubi_eba_create_table(struct ubi_volume *vol,
-					   int nentries)
+static int ubi_eba_mlc_get_peb(struct ubi_volume *vol)
 {
-	struct ubi_eba_table *tbl;
+	struct ubi_eba_mlc_table *tbl;
+
+	tbl = to_mlc_table(vol->eba_tbl);
+
+	mutex_lock(&tbl->lock);
+	while (tbl->free_pebs < 1) {
+		mutex_unlock(&tbl->lock);
+		/* TODO: trigger consolidation. */
+		mutex_lock(&tbl->lock);
+	}
+	tbl->free_pebs--;
+	mutex_unlock(&tbl->lock);
+
+	return ubi_wl_get_peb(vol->ubi);
+}
+
+static int ubi_eba_get_peb(struct ubi_volume *vol)
+{
+	return vol->eba_tbl->ops->get_peb(vol);
+}
+
+static void ubi_eba_normal_get_ldesc(struct ubi_volume *vol, int lnum,
+				     struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_normal_table *tbl = to_normal_table(vol->eba_tbl);
+
+	ldesc->lnum = lnum;
+	ldesc->lpos = UBI_EBA_NA;
+	ldesc->pnum = tbl->entries[lnum].pnum;
+}
+
+static void ubi_eba_mlc_get_ldesc(struct ubi_volume *vol, int lnum,
+				  struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_mlc_table *tbl = to_mlc_table(vol->eba_tbl);
+
+	ldesc->lnum = lnum;
+	if (test_bit(lnum, tbl->consolidated)) {
+		struct ubi_consolidated_peb *cpeb = tbl->entries[lnum].cpeb;
+		int i;
+
+		ldesc->pnum = cpeb->pnum;
+		for (i = 0; i < vol->ubi->max_lebs_per_peb; i++) {
+			if (cpeb->lnums[i] == lnum) {
+				ldesc->lpos = i;
+				break;
+			}
+		}
+
+		ubi_assert(i < vol->ubi->max_lebs_per_peb);
+	} else {
+		ldesc->pnum = tbl->entries[lnum].pnum;
+		ldesc->lpos = UBI_EBA_NA;
+	}
+}
+
+static bool ubi_eba_normal_invalidate_entry(struct ubi_volume *vol,
+					const struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_normal_table *tbl = to_normal_table(vol->eba_tbl);
+
+	tbl->entries[ldesc->lnum].pnum = UBI_LEB_UNMAPPED;
+
+	return true;
+}
+
+static void ubi_eba_normal_update_entry(struct ubi_volume *vol,
+					const struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_normal_table *tbl = to_normal_table(vol->eba_tbl);
+
+	tbl->entries[ldesc->lnum].pnum = ldesc->lnum;
+}
+
+static bool ubi_eba_mlc_invalidate_entry(struct ubi_volume *vol,
+					 const struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_mlc_table *tbl = to_mlc_table(vol->eba_tbl);
+	int lebs_per_cpeb = vol->ubi->max_lebs_per_peb;
+	struct ubi_consolidated_peb *cpeb;
+	struct list_head *dirty = NULL;
+	int i, valid = 0, lnum = ldesc->lnum;
+
+	if (ldesc->lpos == UBI_EBA_NA) {
+		/* The LEB is not consolidated. */
+
+		if (ldesc->pnum < 0)
+			return false;
+
+		list_del_init(&tbl->entries[lnum].node);
+		//if (!consolidating)
+		//	stop_leb_consolidation(vol, ldesc);
+		tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
+		tbl->free_pebs++;
+		return true;
+	}
+
+	cpeb = tbl->entries[lnum].cpeb;
+
+	/*
+	 * Remove the first valid LEB from it's classification list (the other
+	 * entries of a consolidated PEBs are not classified).
+	 */
+	for (i = 0; i < lebs_per_cpeb; i++) {
+		struct ubi_eba_mlc_entry *entry;
+
+		if (cpeb->lnums[i] >= 0) {
+			entry = &tbl->entries[cpeb->lnums[i]];
+			list_del(&entry->node);
+			break;
+		}
+	}
+
+	/* Invalidate the LEB pointed by ldesc. */
+	for (i = 0; i < lebs_per_cpeb; i++) {
+		if (cpeb->lnums[i] == lnum)
+			cpeb->lnums[i] = UBI_LEB_UNMAPPED;
+		else if (cpeb->lnums[i] >= 0)
+			valid++;
+	}
+
+	/*
+	 * We have several dirty lists. The dirty list is selected based on the
+	 * number of valid LEBs present in the consolidated PEB. This allows
+	 * better selection of consolidable LEBs (for example, on TLC NANDs you
+	 * might prefer to first pick LEBs that are alone in their PEB to
+	 * produce more free PEBs, or combine LEBs from 2 different dirty lists
+	 * to always produce at least 2 free PEBs at each consolidation step.
+	 */
+	if (valid)
+		dirty = &tbl->closed.dirty[valid - 1];
+
+	/* Re-insert the first valid LEB in the appropriate dirty list. */
+	for (i = 0; dirty && i < lebs_per_cpeb; i++) {
+		struct ubi_eba_mlc_entry *entry;
+
+		if (cpeb->lnums[i] >= 0) {
+			entry = &tbl->entries[cpeb->lnums[i]];
+			list_add(&entry->node, dirty);
+			break;
+		}
+	}
+
+//	if (!consolidating)
+//		stop_leb_consolidation(vol, ldesc);
+
+	clear_bit(lnum, tbl->consolidated);
+	tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
+
+	if (!valid)
+		kfree(cpeb);
+
+	return !valid;
+}
+
+static void ubi_eba_mlc_update_entry(struct ubi_volume *vol,
+				     const struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_eba_mlc_table *tbl = to_mlc_table(vol->eba_tbl);
+	struct ubi_eba_mlc_entry *entry;
+
+	ubi_assert(!test_bit(ldesc->lnum, tbl->consolidated));
+
+	mutex_lock(&tbl->lock);
+	entry = &tbl->entries[ldesc->lnum];
+	entry->pnum = ldesc->pnum;
+
+	/*
+	 * LEB content has just been updated, put the LEB at the beginning
+	 * of the open.
+	 */
+	if (!list_empty(&entry->node))
+		list_del(&entry->node);
+
+//	stop_leb_consolidation(vol, ldesc);
+
+	list_add(&entry->node, &tbl->open);
+	mutex_unlock(&tbl->lock);
+}
+
+static bool ubi_eba_invalidate_entry(struct ubi_volume *vol,
+				     const struct ubi_eba_leb_desc *ldesc)
+{
+	return vol->eba_tbl->ops->invalidate_entry(vol, ldesc);
+}
+
+static void ubi_eba_update_entry(struct ubi_volume *vol,
+				 const struct ubi_eba_leb_desc *ldesc)
+{
+	vol->eba_tbl->ops->update_entry(vol, ldesc);
+}
+
+static struct ubi_eba_table *
+ubi_eba_normal_create_table(struct ubi_volume *vol, int nentries)
+{
+	struct ubi_eba_normal_table *tbl;
 	int err = -ENOMEM;
 	int i;
 
@@ -152,13 +397,112 @@ struct ubi_eba_table *ubi_eba_create_table(struct ubi_volume *vol,
 		tbl->entries[i].pnum = UBI_LEB_UNMAPPED;
 
 
-	return tbl;
+	return &tbl->base;
 
 err:
 	kfree(tbl->entries);
 	kfree(tbl);
 
 	return ERR_PTR(err);
+}
+
+static struct ubi_eba_table *
+ubi_eba_mlc_create_table(struct ubi_volume *vol, int nentries)
+{
+	int lebs_per_peb = vol->ubi->max_lebs_per_peb;
+	struct ubi_eba_mlc_table *tbl;
+	int i;
+
+	tbl->entries = kmalloc(nentries * sizeof(*tbl->entries), GFP_KERNEL);
+	if (!tbl->entries)
+		goto err;
+
+	tbl->consolidated = kzalloc(DIV_ROUND_UP(nentries, BITS_PER_LONG),
+				    GFP_KERNEL);
+	if (!tbl->consolidated)
+		goto err;
+
+	INIT_LIST_HEAD(&tbl->open);
+	INIT_LIST_HEAD(&tbl->closed.clean);
+
+	tbl->closed.dirty = kmalloc((lebs_per_peb - 1) *
+				    sizeof(*tbl->closed.dirty),
+				    GFP_KERNEL);
+	if (tbl->closed.dirty)
+		goto err;
+
+	for (i = 0; i < lebs_per_peb - 1; i++)
+		INIT_LIST_HEAD(&tbl->closed.dirty[i]);
+
+	for (i = 0; i < nentries; i++) {
+		tbl->entries[i].pnum = UBI_LEB_UNMAPPED;
+		INIT_LIST_HEAD(&tbl->entries[i].node);
+	}
+
+	return &tbl->base;
+
+err:
+	kfree(tbl->closed.dirty);
+	kfree(tbl->consolidated);
+	kfree(tbl->entries);
+	kfree(tbl);
+
+	return ERR_PTR(-ENOMEM);
+}
+
+/**
+ * ubi_eba_get_ldesc - get information about a LEB
+ * @vol: volume description object
+ * @lnum: logical eraseblock number
+ * @ldesc: the LEB descriptor to fill
+ *
+ * Used to query information about a specific LEB.
+ * It is currently only returning the physical position of the LEB, but will be
+ * extended to provide more information.
+ */
+void ubi_eba_get_ldesc(struct ubi_volume *vol, int lnum,
+		       struct ubi_eba_leb_desc *ldesc)
+{
+	ubi_assert(vol && vol->eba_tbl && vol->eba_tbl->ops);
+	ubi_assert(vol->eba_tbl->ops->get_ldesc);
+
+	vol->eba_tbl->ops->get_ldesc(vol, lnum, ldesc);
+}
+
+/**
+ * ubi_eba_create_table - allocate a new EBA table and initialize it with all
+ *			  LEBs unmapped
+ * @vol: volume containing the EBA table to copy
+ * @nentries: number of entries in the table
+ *
+ * Allocate a new EBA table and initialize it with all LEBs unmapped.
+ * Returns a valid pointer if it succeed, an ERR_PTR() otherwise.
+ */
+struct ubi_eba_table *ubi_eba_create_table(struct ubi_volume *vol,
+					   int nentries)
+{
+	ubi_assert(vol && vol->eba_tbl && vol->eba_tbl->ops);
+	ubi_assert(vol->eba_tbl->ops->create);
+
+	return vol->eba_tbl->ops->create(vol, nentries);
+}
+
+static void ubi_eba_normal_destroy_table(struct ubi_eba_table *base)
+{
+	struct ubi_eba_normal_table *tbl = to_normal_table(base);
+
+	kfree(tbl->entries);
+	kfree(tbl);
+}
+
+static void ubi_eba_mlc_destroy_table(struct ubi_eba_table *base)
+{
+	struct ubi_eba_mlc_table *tbl = to_mlc_table(base);
+
+	kfree(tbl->closed.dirty);
+	kfree(tbl->consolidated);
+	kfree(tbl->entries);
+	kfree(tbl);
 }
 
 /**
@@ -172,8 +516,79 @@ void ubi_eba_destroy_table(struct ubi_eba_table *tbl)
 	if (!tbl)
 		return;
 
-	kfree(tbl->entries);
-	kfree(tbl);
+	ubi_assert(tbl && tbl->ops);
+	ubi_assert(tbl->ops->destroy);
+
+	tbl->ops->destroy(tbl);
+}
+
+static void ubi_eba_normal_copy_table(struct ubi_volume *vol,
+				      struct ubi_eba_table *dst_base,
+				      int nentries)
+{
+	struct ubi_eba_normal_table *src, *dst;
+	int i;
+
+	src = to_normal_table(vol->eba_tbl);
+	dst = to_normal_table(dst_base);
+
+	for (i = 0; i < nentries; i++)
+		dst->entries[i].pnum = src->entries[i].pnum;
+}
+
+static inline int mentry_to_lnum(struct ubi_eba_mlc_table *tbl,
+				 struct ubi_eba_mlc_entry *entry)
+{
+	unsigned long idx = (unsigned long)entry - (unsigned long)tbl->entries;
+
+	idx /= sizeof(*entry);
+
+	return idx;
+}
+
+static void ubi_eba_mlc_copy_table(struct ubi_volume *vol,
+				   struct ubi_eba_table *dst_base,
+				   int nentries)
+{
+	struct ubi_eba_mlc_table *src, *dst;
+	int lebs_per_cpeb = vol->ubi->max_lebs_per_peb;
+	struct ubi_eba_mlc_entry *entry;
+	int i, lnum;
+
+	src = to_mlc_table(vol->eba_tbl);
+	dst = to_mlc_table(dst_base);
+
+	for (i = 0; i < nentries; i++) {
+		if (test_bit(i, src->consolidated)) {
+			/*
+			 * No need to copy the cpeb resource, only
+			 * ubi_leb_unmap() should do that.
+			 */
+			dst->entries[i].cpeb = src->entries[i].cpeb;
+			set_bit(i, dst->consolidated);
+		} else {
+			dst->entries[i].pnum = src->entries[i].pnum;
+		}
+	}
+
+	list_for_each_entry(entry, &src->open, node) {
+		lnum = mentry_to_lnum(src, entry);
+		list_add_tail(&dst->entries[lnum].node, &dst->open);
+	}
+
+	list_for_each_entry(entry, &src->closed.clean, node) {
+		lnum = mentry_to_lnum(src, entry);
+		list_add_tail(&dst->entries[lnum].node, &dst->closed.clean);
+	}
+
+	for (i = 0; i < lebs_per_cpeb; i++) {
+		struct list_head *dirty = &src->closed.dirty[i];
+
+		list_for_each_entry(entry, dirty, node) {
+			lnum = mentry_to_lnum(src, entry);
+			list_add_tail(&dst->entries[lnum].node, dirty);
+		}
+	}
 }
 
 /**
@@ -187,15 +602,10 @@ void ubi_eba_destroy_table(struct ubi_eba_table *tbl)
 void ubi_eba_copy_table(struct ubi_volume *vol, struct ubi_eba_table *dst,
 		        int nentries)
 {
-	struct ubi_eba_table *src;
-	int i;
-
+	ubi_assert(dst->ops && dst->ops->copy);
 	ubi_assert(dst && vol && vol->eba_tbl);
 
-	src = vol->eba_tbl;
-
-	for (i = 0; i < nentries; i++)
-		dst->entries[i].pnum = src->entries[i].pnum;
+	dst->ops->copy(vol, dst, nentries);
 }
 
 /**
@@ -207,6 +617,7 @@ void ubi_eba_copy_table(struct ubi_volume *vol, struct ubi_eba_table *dst,
  */
 void ubi_eba_set_table(struct ubi_volume *vol, struct ubi_eba_table *tbl)
 {
+
 	ubi_eba_destroy_table(vol->eba_tbl);
 	vol->eba_tbl = tbl;
 }
@@ -448,7 +859,11 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
  */
 bool ubi_eba_is_mapped(struct ubi_volume *vol, int lnum)
 {
-	return vol->eba_tbl->entries[lnum].pnum >= 0;
+	struct ubi_eba_leb_desc ldesc;
+
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+
+	return ldesc.pnum >= 0;
 }
 
 /**
@@ -464,7 +879,9 @@ bool ubi_eba_is_mapped(struct ubi_volume *vol, int lnum)
 int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		      int lnum)
 {
-	int err, pnum, vol_id = vol->vol_id;
+	int err, vol_id = vol->vol_id;
+	struct ubi_eba_leb_desc ldesc;
+	bool release_peb;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -473,21 +890,82 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl->entries[lnum].pnum;
-	if (pnum < 0)
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+	if (ldesc.pnum < 0)
 		/* This logical eraseblock is already unmapped */
 		goto out_unlock;
 
-	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, pnum);
+	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, ldesc.pnum);
 
 	down_read(&ubi->fm_eba_sem);
-	vol->eba_tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
+	release_peb = ubi_eba_invalidate_entry(vol, &ldesc);
 	up_read(&ubi->fm_eba_sem);
-	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
+	if (release_peb)
+		err = ubi_wl_put_peb(ubi, vol_id, lnum, ldesc.pnum, 0);
 
 out_unlock:
 	leb_write_unlock(ubi, vol_id, lnum);
 	return err;
+}
+
+static int ubi_eba_io_mode_and_offs(struct ubi_volume *vol,
+				    const struct ubi_eba_leb_desc *ldesc,
+				    enum ubi_io_mode *io_mode, int *offset)
+{
+	switch (vol->vol_mode) {
+	case UBI_VOL_MODE_NORMAL:
+		*io_mode = UBI_IO_MODE_NORMAL;
+		break;
+	case UBI_VOL_MODE_SLC:
+		*io_mode = UBI_IO_MODE_SLC;
+		break;
+	case UBI_VOL_MODE_MLC_SAFE:
+		if (ldesc->lpos == UBI_EBA_NA) {
+			*io_mode = UBI_IO_MODE_SLC;
+		} else {
+			*io_mode = UBI_IO_MODE_NORMAL;
+			*offset = vol->leb_size * ldesc->lpos;
+		}
+
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int read_leb(struct ubi_volume *vol, void *buf,
+		    const struct ubi_eba_leb_desc *ldesc, int loffset, int len)
+{
+	struct ubi_device *ubi = vol->ubi;
+	enum ubi_io_mode io_mode;
+	int offset, err;
+
+	err = ubi_eba_io_mode_and_offs(vol, ldesc, &io_mode, &offset);
+	if (err)
+		return err;
+
+	offset += loffset;
+
+	return ubi_io_read_data(ubi, buf, ldesc->pnum, offset, len, io_mode);
+}
+
+static int write_leb(struct ubi_volume *vol, const void *buf,
+		     const struct ubi_eba_leb_desc *ldesc, int loffset,
+		     int len)
+{
+	struct ubi_device *ubi = vol->ubi;
+	enum ubi_io_mode io_mode;
+	int offset, err;
+
+	err = ubi_eba_io_mode_and_offs(vol, ldesc, &io_mode, &offset);
+	if (err)
+		return err;
+
+	offset += loffset;
+
+	return ubi_io_write_data(ubi, buf, ldesc->pnum, offset, len, io_mode);
 }
 
 /**
@@ -512,18 +990,18 @@ out_unlock:
 int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		     void *buf, int offset, int len, int check)
 {
-	int err, pnum, scrub = 0, vol_id = vol->vol_id;
+	int err, scrub = 0, vol_id = vol->vol_id;
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	uint32_t uninitialized_var(crc);
-	enum ubi_io_mode io_mode;
+	struct ubi_eba_leb_desc ldesc;
 
 	err = leb_read_lock(ubi, vol_id, lnum);
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl->entries[lnum].pnum;
-	if (pnum < 0) {
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+	if (ldesc.pnum < 0) {
 		/*
 		 * The logical eraseblock is not mapped, fill the whole buffer
 		 * with 0xFF bytes. The exception is static volumes for which
@@ -538,7 +1016,7 @@ int ubi_eba_read_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	}
 
 	dbg_eba("read %d bytes from offset %d of LEB %d:%d, PEB %d",
-		len, offset, vol_id, lnum, pnum);
+		len, offset, vol_id, lnum, ldesc.pnum);
 
 	if (vol->vol_type == UBI_DYNAMIC_VOLUME)
 		check = 0;
@@ -553,7 +1031,7 @@ retry:
 
 		vid_hdr = ubi_get_vid_hdr(vidb);
 
-		err = ubi_io_read_vid_hdr(ubi, pnum, vidb, 1);
+		err = ubi_io_read_vid_hdr(ubi, ldesc.pnum, vidb, 1);
 		if (err && err != UBI_IO_BITFLIPS) {
 			if (err > 0) {
 				/*
@@ -567,7 +1045,7 @@ retry:
 				if (err == UBI_IO_BAD_HDR_EBADMSG ||
 				    err == UBI_IO_BAD_HDR) {
 					ubi_warn(ubi, "corrupted VID header at PEB %d, LEB %d:%d",
-						 pnum, vol_id, lnum);
+						 ldesc.pnum, vol_id, lnum);
 					err = -EBADMSG;
 				} else {
 					/*
@@ -602,9 +1080,7 @@ retry:
 		ubi_free_vid_buf(vidb);
 	}
 
-	io_mode = ubi_vol_mode_to_io_mode(vol->vol_mode);
-
-	err = ubi_io_read_data(ubi, buf, pnum, offset, len, io_mode);
+	err = read_leb(vol, buf, &ldesc, offset, len);
 	if (err) {
 		if (err == UBI_IO_BITFLIPS)
 			scrub = 1;
@@ -632,7 +1108,7 @@ retry:
 	}
 
 	if (scrub)
-		err = ubi_wl_scrub_peb(ubi, pnum);
+		err = ubi_wl_scrub_peb(ubi, ldesc.pnum);
 
 	leb_read_unlock(ubi, vol_id, lnum);
 	return err;
@@ -656,7 +1132,7 @@ out_unlock:
  *
  * This function works exactly like ubi_eba_read_leb(). But instead of
  * storing the read data into a buffer it writes to an UBI scatter gather
- * list.
+ * list.out_free
  */
 int ubi_eba_read_leb_sg(struct ubi_device *ubi, struct ubi_volume *vol,
 			struct ubi_sgl *sgl, int lnum, int offset, int len,
@@ -749,8 +1225,8 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 
 	/* Read everything before the area where the write failure happened */
 	if (offset > 0) {
-		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0, offset,
-				       io_mode);
+		err = ubi_io_read_data(ubi, ubi->peb_buf, pnum, 0,
+				       offset, io_mode);
 		if (err && err != UBI_IO_BITFLIPS)
 			goto out_unlock;
 	}
@@ -773,8 +1249,14 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 out_unlock:
 	mutex_unlock(&ubi->buf_mutex);
 
-	if (!err)
-		vol->eba_tbl->entries[lnum].pnum = new_pnum;
+	if (!err) {
+		struct ubi_eba_leb_desc ldesc;
+
+		ldesc.pnum = new_pnum;
+		ldesc.lnum = lnum;
+		ldesc.lpos = UBI_EBA_NA;
+		ubi_eba_update_entry(vol, &ldesc);
+	}
 
 out_put:
 	up_read(&ubi->fm_eba_sem);
@@ -853,47 +1335,57 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 				  struct ubi_vid_io_buf *vidb, const void *buf,
 				  int offset, int len)
 {
+	struct ubi_eba_leb_desc nldesc, oldesc;
 	struct ubi_device *ubi = vol->ubi;
-	int pnum, opnum, err, vol_id = vol->vol_id;
+	int err, vol_id = vol->vol_id;
 
-	pnum = ubi_wl_get_peb(ubi);
-	if (pnum < 0) {
-		err = pnum;
+	ubi_eba_get_ldesc(vol, lnum, &oldesc);
+	nldesc.lpos = UBI_EBA_NA;
+	nldesc.lnum = lnum;
+	nldesc.pnum = ubi_wl_get_peb(ubi);
+	if (nldesc.pnum < 0) {
+		err = nldesc.pnum;
 		goto out_put;
 	}
 
-	opnum = vol->eba_tbl->entries[lnum].pnum;
-
 	dbg_eba("write VID hdr and %d bytes at offset %d of LEB %d:%d, PEB %d",
-		len, offset, vol_id, lnum, pnum);
+		len, offset, vol_id, nldesc.lnum, nldesc.pnum);
 
-	err = ubi_io_write_vid_hdr(ubi, pnum, vidb);
+	err = ubi_io_write_vid_hdr(ubi, nldesc.pnum, vidb);
 	if (err) {
 		ubi_warn(ubi, "failed to write VID header to LEB %d:%d, PEB %d",
-			 vol_id, lnum, pnum);
+			 vol_id, nldesc.lnum, nldesc.pnum);
 		goto out_put;
 	}
 
 	if (len) {
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len,
+		err = ubi_io_write_data(ubi, buf, nldesc.pnum, offset, len,
 					UBI_IO_MODE_NORMAL);
 		if (err) {
 			ubi_warn(ubi,
 				 "failed to write %d bytes at offset %d of LEB %d:%d, PEB %d",
-				 len, offset, vol_id, lnum, pnum);
+				 len, offset, vol_id, nldesc.lnum,
+				 nldesc.pnum);
 			goto out_put;
 		}
 	}
 
-	vol->eba_tbl->entries[lnum].pnum = pnum;
+	/*
+	 * Set oldesc.pnum to UBI_LEB_UNMAPPED so that ubi_wl_put_peb() is the
+	 * PEB is still containing valid LEBs.
+	 */
+	if (!ubi_eba_invalidate_entry(vol, &oldesc))
+		oldesc.pnum = UBI_LEB_UNMAPPED;
+
+	ubi_eba_update_entry(vol, &nldesc);
 
 out_put:
 	up_read(&ubi->fm_eba_sem);
 
-	if (err && pnum >= 0)
-		err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
-	else if (!err && opnum >= 0)
-		err = ubi_wl_put_peb(ubi, vol_id, lnum, opnum, 0);
+	if (err && nldesc.pnum >= 0)
+		err = ubi_wl_put_peb(ubi, vol_id, nldesc.lnum, nldesc.pnum, 1);
+	else if (!err && oldesc.pnum >= 0)
+		err = ubi_wl_put_peb(ubi, vol_id, oldesc.lnum, oldesc.pnum, 0);
 
 	return err;
 }
@@ -916,8 +1408,9 @@ out_put:
 int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		      const void *buf, int offset, int len)
 {
-	int err, pnum, tries, vol_id = vol->vol_id;
+	int err, tries, vol_id = vol->vol_id;
 	struct ubi_vid_io_buf *vidb;
+	struct ubi_eba_leb_desc ldesc;
 	struct ubi_vid_hdr *vid_hdr;
 	enum ubi_io_mode io_mode;
 
@@ -930,17 +1423,19 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl->entries[lnum].pnum;
-	if (pnum >= 0) {
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+	if (ldesc.pnum >= 0) {
 		dbg_eba("write %d bytes at offset %d of LEB %d:%d, PEB %d",
-			len, offset, vol_id, lnum, pnum);
+			len, offset, vol_id, lnum, ldesc.pnum);
 
-		err = ubi_io_write_data(ubi, buf, pnum, offset, len, io_mode);
+		err = ubi_io_write_data(ubi, buf, ldesc.pnum, offset, len,
+					io_mode);
 		if (err) {
-			ubi_warn(ubi, "failed to write data to PEB %d", pnum);
+			ubi_warn(ubi, "failed to write data to PEB %d",
+				 ldesc.pnum);
 			if (err == -EIO && ubi->bad_allowed)
-				err = recover_peb(ubi, pnum, vol_id, lnum, buf,
-						  offset, len);
+				err = recover_peb(ubi, ldesc.pnum, vol_id,
+						  lnum, buf, offset, len);
 		}
 
 		goto out;
@@ -1065,7 +1560,7 @@ int ubi_eba_write_leb_st(struct ubi_device *ubi, struct ubi_volume *vol,
 	vid_hdr->used_ebs = cpu_to_be32(used_ebs);
 	vid_hdr->data_crc = cpu_to_be32(crc);
 
-	ubi_assert(vol->eba_tbl->entries[lnum].pnum < 0);
+	ubi_assert(!ubi_eba_is_mapped(vol, lnum));
 
 	for (tries = 0; tries <= UBI_IO_RETRIES; tries++) {
 		err = try_write_vid_and_data(vol, lnum, vidb, buf, 0, len);
@@ -1232,6 +1727,7 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 {
 	int err, vol_id, lnum, data_size, aldata_size, idx;
 	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
+	struct ubi_eba_leb_desc ldesc;
 	struct ubi_volume *vol;
 	enum ubi_io_mode io_mode;
 	uint32_t crc;
@@ -1283,9 +1779,10 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	 * probably waiting on @ubi->move_mutex. No need to continue the work,
 	 * cancel it.
 	 */
-	if (vol->eba_tbl->entries[lnum].pnum != from) {
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+	if (ldesc.pnum != from) {
 		dbg_wl("LEB %d:%d is no longer mapped to PEB %d, mapped to PEB %d, cancel",
-		       vol_id, lnum, from, vol->eba_tbl->entries[lnum].pnum);
+		       vol_id, lnum, from, ldesc.pnum);
 		err = MOVE_CANCEL_RACE;
 		goto out_unlock_leb;
 	}
@@ -1381,9 +1878,11 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		cond_resched();
 	}
 
-	ubi_assert(vol->eba_tbl->entries[lnum].pnum == from);
+	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+	ubi_assert(ldesc.pnum == from);
 	down_read(&ubi->fm_eba_sem);
-	vol->eba_tbl->entries[lnum].pnum = to;
+	ldesc.pnum = to;
+	ubi_eba_update_entry(vol, &ldesc);
 	up_read(&ubi->fm_eba_sem);
 
 out_unlock_buf:
@@ -1584,10 +2083,12 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 				 */
 				ubi_remove_aleb(av, aleb, &ai->erase);
 			} else {
-				struct ubi_eba_entry *entry;
+				struct ubi_eba_leb_desc ldesc;
 
-				entry = &vol->eba_tbl->entries[aleb->lnum];
-				entry->pnum = aleb->peb->pnum;
+				ldesc.lnum = aleb->lnum;
+				ldesc.lpos = UBI_EBA_NA;
+				ldesc.pnum = aleb->peb->pnum;
+				ubi_eba_update_entry(vol, &ldesc);
 			}
 		}
 	}

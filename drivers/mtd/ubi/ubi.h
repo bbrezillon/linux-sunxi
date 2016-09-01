@@ -295,10 +295,13 @@ struct ubi_fm_pool {
 	int max_size;
 };
 
+#define UBI_EBA_NA	-1
+
 /**
  * struct ubi_eba_leb_desc - EBA logical eraseblock descriptor
  * @lnum: the logical eraseblock number
  * @pnum: the physical eraseblock where the LEB can be found
+ * @lpos: LEB position in the PEB
  *
  * This structure is here to hide EBA's internal from other part of the
  * UBI implementation.
@@ -308,6 +311,7 @@ struct ubi_fm_pool {
 struct ubi_eba_leb_desc {
 	int lnum;
 	int pnum;
+	int lpos;
 };
 
 /**
@@ -393,6 +397,7 @@ struct ubi_volume {
 	void *upd_buf;
 
 	struct ubi_eba_table *eba_tbl;
+	const struct ubi_eba_table_ops *eba_tbl_ops;
 	unsigned int checked:1;
 	unsigned int corrupted:1;
 	unsigned int upd_marker:1;

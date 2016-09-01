@@ -237,10 +237,16 @@ enum {
  *		      corruption.
  *		      In the other hand, this means UBI will only expose half
  *		      the capacity of the NAND.
+ * @UBI_VOL_MODE_MLC_SAFE: eraseblocks are used in SLC mode when they are being
+ *			   written and are consolidated in MLC mode in
+ *			   background. This allows us to maximize storage
+ *			   utilization while keeping it robust against paired
+ *			   page corruption
  */
 enum {
 	UBI_VOL_MODE_NORMAL,
 	UBI_VOL_MODE_SLC,
+	UBI_VOL_MODE_MLC_SAFE,
 };
 
 /*
