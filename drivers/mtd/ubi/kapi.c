@@ -82,7 +82,7 @@ void ubi_do_get_volume_info(struct ubi_device *ubi, struct ubi_volume *vol,
 {
 	vi->vol_id = vol->vol_id;
 	vi->ubi_num = ubi->ubi_num;
-	vi->size = vol->reserved_pebs;
+	vi->size = vol->reserved_lebs;
 	vi->used_bytes = vol->used_bytes;
 	vi->vol_type = vol->vol_type;
 	vi->corrupted = vol->corrupted;

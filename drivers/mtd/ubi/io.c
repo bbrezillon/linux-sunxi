@@ -1079,7 +1079,8 @@ static int validate_mode(const struct ubi_device *ubi,
 
 	/* Version 2 supports normal and SLC mode. */
 	if (vid_hdr->version == 2 &&
-	    vid_hdr->vol_mode != UBI_VID_MODE_SLC)
+	    vid_hdr->vol_mode != UBI_VID_MODE_SLC &&
+	    vid_hdr->vol_mode != UBI_VID_MODE_MLC_SAFE)
 		goto err;
 
 	return 0;
@@ -1088,6 +1089,29 @@ err:
 	ubi_err(ubi, "mode %d not supported by UBI version %d",
 		vid_hdr->vol_mode, vid_hdr->version);
 
+	return -EINVAL;
+}
+
+#define UBI_VID
+
+static int validate_lpos(const struct ubi_device *ubi,
+			 const struct ubi_vid_hdr *vid_hdr)
+{
+	if (!vid_hdr->lpos)
+		return 0;
+
+	if (vid_hdr->version < 2 || vid_hdr->vol_mode != UBI_VID_MODE_MLC_SAFE)
+		goto err;
+
+	if (vid_hdr->lpos != UBI_VID_LPOS_CONSOLIDATED &&
+	    vid_hdr->lpos != UBI_VID_LPOS_INVALID &&
+	    vid_hdr->lpos >= ubi->max_lebs_per_peb)
+		goto err;
+
+	return 0;
+
+err:
+	ubi_err(ubi, "invalid lpos value: %d", vid_hdr->lpos);
 	return -EINVAL;
 }
 
@@ -1119,6 +1143,9 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 	}
 
 	if (validate_mode(ubi, vid_hdr))
+		goto bad;
+
+	if (validate_lpos(ubi, vid_hdr))
 		goto bad;
 
 	if (copy_flag != 0 && copy_flag != 1) {
@@ -1225,45 +1252,33 @@ bad:
 }
 
 /**
- * ubi_io_read_vid_hdr - read and check a volume identifier header.
+ * check_vid_hdr - check a volume identifier header.
  * @ubi: UBI device description object
+ * @vid_hdr: the volume identifier header to check
  * @pnum: physical eraseblock number to read from
- * @vidb: the volume identifier buffer to store data in
+ * @read_err: ubi_io_read() return code
+ * @empty_allowed: whether empty headers (filled with 0xff) are allowed or not
  * @verbose: be verbose if the header is corrupted or wasn't found
  *
- * This function reads the volume identifier header from physical eraseblock
- * @pnum and stores it in @vidb. It also checks CRC checksum of the read
- * volume identifier header. The error codes are the same as in
- * 'ubi_io_read_ec_hdr()'.
- *
- * Note, the implementation of this function is also very similar to
- * 'ubi_io_read_ec_hdr()', so refer commentaries in 'ubi_io_read_ec_hdr()'.
+ * This function checks the UBI magic and CRC checksum of the read
+ * volume identifier header and validate the consistency of its fields.
  */
-int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
-			struct ubi_vid_io_buf *vidb, int verbose)
+static int check_vid_hdr(const struct ubi_device *ubi, int pnum,
+			 const struct ubi_vid_hdr *vid_hdr,
+			 int read_err, bool empty_allowed, bool verbose)
 {
-	int err, read_err;
-	uint32_t crc, magic, hdr_crc;
-	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
-	void *p = vidb->buffer;
-
-	dbg_io("read VID header from PEB %d", pnum);
-	ubi_assert(pnum >= 0 &&  pnum < ubi->peb_count);
-
-	read_err = ubi_io_read(ubi, p, pnum, ubi->vid_hdr_aloffset,
-			       ubi->vid_hdr_shift + UBI_VID_HDR_SIZE,
-			       UBI_IO_MODE_NORMAL);
-	if (read_err && read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
-		return read_err;
+	u32 crc, magic, hdr_crc;
 
 	magic = be32_to_cpu(vid_hdr->magic);
 	if (magic != UBI_VID_HDR_MAGIC) {
 		if (mtd_is_eccerr(read_err))
 			return UBI_IO_BAD_HDR_EBADMSG;
 
-		if (ubi_check_pattern(vid_hdr, 0xFF, UBI_VID_HDR_SIZE)) {
+		if (empty_allowed &&
+		    ubi_check_pattern(vid_hdr, 0xFF, UBI_VID_HDR_SIZE)) {
 			if (verbose)
-				ubi_warn(ubi, "no VID header found at PEB %d, only 0xFF bytes",
+				ubi_warn(ubi,
+					 "no VID header found at PEB %d, only 0xFF bytes",
 					 pnum);
 			dbg_bld("no VID header found at PEB %d, only 0xFF bytes",
 				pnum);
@@ -1274,7 +1289,8 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 		}
 
 		if (verbose) {
-			ubi_warn(ubi, "bad magic number at PEB %d: %08x instead of %08x",
+			ubi_warn(ubi,
+				 "bad magic number at PEB %d: %08x instead of %08x",
 				 pnum, magic, UBI_VID_HDR_MAGIC);
 			ubi_dump_vid_hdr(vid_hdr);
 		}
@@ -1300,13 +1316,113 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 			return UBI_IO_BAD_HDR_EBADMSG;
 	}
 
-	err = validate_vid_hdr(ubi, vid_hdr);
-	if (err) {
+	if (validate_vid_hdr(ubi, vid_hdr)) {
 		ubi_err(ubi, "validation failed for PEB %d", pnum);
 		return -EINVAL;
 	}
 
+	return 0;
+}
+
+/**
+ * ubi_io_read_vid_hdr - read and check a volume identifier header.
+ * @ubi: UBI device description object
+ * @pnum: physical eraseblock number to read from
+ * @vidb: the volume identifier buffer to store data in
+ * @verbose: be verbose if the header is corrupted or wasn't found
+ *
+ * This function reads the volume identifier header from physical eraseblock
+ * @pnum and stores it in @vidb. It also checks CRC checksum of the read
+ * volume identifier header. The error codes are the same as in
+ * 'ubi_io_read_ec_hdr()'.
+ *
+ * Note, the implementation of this function is also very similar to
+ * 'ubi_io_read_ec_hdr()', so refer commentaries in 'ubi_io_read_ec_hdr()'.
+ */
+int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
+			struct ubi_vid_io_buf *vidb, int verbose)
+{
+	int err, read_err, i;
+	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
+	void *p = vidb->buffer;
+
+	dbg_io("read VID header from PEB %d", pnum);
+	ubi_assert(pnum >= 0 &&  pnum < ubi->peb_count);
+
+	read_err = ubi_io_read(ubi, p, pnum, ubi->vid_hdr_aloffset,
+			       ubi->vid_hdr_shift + UBI_VID_HDR_SIZE,
+			       UBI_IO_MODE_NORMAL);
+	if (read_err && read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
+		return read_err;
+
+	/*
+	 * Check the VID header. Empty headers are allowed here, it just means
+	 * we have an empty PEB.
+	 */
+	err = check_vid_hdr(ubi, pnum, vid_hdr, read_err, true, verbose);
+	if (err)
+		return err;
+
+	/* This is a real VID header, return now. */
+	if (!vid_hdr->lpos) {
+		vidb->nhdrs = 1;
+		return read_err ? UBI_IO_BITFLIPS : 0;
+	}
+
+	/*
+	 * We retrieved a dummy VID header. Look at the end of the PEB for the
+	 * real one.
+	 */
+	read_err = ubi_io_read(ubi, p, pnum,
+			       ubi->peb_size - ubi->vid_hdr_alsize,
+			       ubi->vid_hdr_alsize,
+			       UBI_IO_MODE_NORMAL);
+	if (read_err && read_err != UBI_IO_BITFLIPS && !mtd_is_eccerr(read_err))
+		return read_err;
+
+	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+		/*
+		 * Check the VID header. Empty headers are not allowed here:
+		 * this means we experienced a power-cut in the middle of the
+		 * consolidation process, and the PEB should be re-erased.
+		 */
+		err = check_vid_hdr(ubi, pnum, vid_hdr, read_err, false,
+				    verbose);
+		if (err) {
+			if (err == UBI_IO_BAD_HDR &&
+			    ubi_check_pattern(p, 0xff, ubi->vid_hdr_alsize))
+				return UBI_IO_INCOMPLETE_CONSO;
+
+			return err;
+		}
+
+		/* Make sure the lpos value is consistent. */
+		if (vid_hdr[i].lpos != i &&
+		    vid_hdr[i].lpos != UBI_VID_LPOS_INVALID)
+			return -EINVAL;
+	}
+
+	vidb->nhdrs = ubi->max_lebs_per_peb;
+
 	return read_err ? UBI_IO_BITFLIPS : 0;
+}
+
+/**
+ * ubi_io_prepare_vid_hdr - prepare a volume identifier header.
+ * @ubi: UBI device description object
+ * @vidh: the volume identifier header to prepare
+ *
+ * This function initializes the magic and version fields and calculate the
+ * VID header CRC.
+ */
+void ubi_io_prepare_vid_hdr(struct ubi_device *ubi, struct ubi_vid_hdr *vidh)
+{
+	u32 crc;
+
+	vidh->magic = cpu_to_be32(UBI_VID_HDR_MAGIC);
+	vidh->version = ubi->version;
+	crc = crc32(UBI_CRC32_INIT, vidh, UBI_VID_HDR_SIZE_CRC);
+	vidh->hdr_crc = cpu_to_be32(crc);
 }
 
 /**
@@ -1329,7 +1445,6 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 {
 	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
 	int err;
-	uint32_t crc;
 	void *p = vidb->buffer;
 
 	dbg_io("write VID header to PEB %d", pnum);
@@ -1339,10 +1454,7 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 	if (err)
 		return err;
 
-	vid_hdr->magic = cpu_to_be32(UBI_VID_HDR_MAGIC);
-	vid_hdr->version = ubi->version;
-	crc = crc32(UBI_CRC32_INIT, vid_hdr, UBI_VID_HDR_SIZE_CRC);
-	vid_hdr->hdr_crc = cpu_to_be32(crc);
+	ubi_io_prepare_vid_hdr(ubi, vid_hdr);
 
 	err = self_check_vid_hdr(ubi, pnum, vid_hdr);
 	if (err)
@@ -1477,27 +1589,14 @@ static int self_check_vid_hdr(const struct ubi_device *ubi, int pnum,
 			      const struct ubi_vid_hdr *vid_hdr)
 {
 	int err;
-	uint32_t magic;
 
 	if (!ubi_dbg_chk_io(ubi))
 		return 0;
 
-	magic = be32_to_cpu(vid_hdr->magic);
-	if (magic != UBI_VID_HDR_MAGIC) {
-		ubi_err(ubi, "bad VID header magic %#08x at PEB %d, must be %#08x",
-			magic, pnum, UBI_VID_HDR_MAGIC);
-		goto fail;
-	}
+	err = check_vid_hdr(ubi, pnum, vid_hdr, 0, true, false);
+	if (!err)
+		return 0;
 
-	err = validate_vid_hdr(ubi, vid_hdr);
-	if (err) {
-		ubi_err(ubi, "self-check failed for PEB %d", pnum);
-		goto fail;
-	}
-
-	return err;
-
-fail:
 	ubi_err(ubi, "self-check failed for PEB %d", pnum);
 	ubi_dump_vid_hdr(vid_hdr);
 	dump_stack();
@@ -1516,7 +1615,6 @@ fail:
 static int self_check_peb_vid_hdr(const struct ubi_device *ubi, int pnum)
 {
 	int err;
-	uint32_t crc, hdr_crc;
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	void *p;
@@ -1534,18 +1632,6 @@ static int self_check_peb_vid_hdr(const struct ubi_device *ubi, int pnum)
 			  ubi->vid_hdr_alsize, UBI_IO_MODE_NORMAL);
 	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
 		goto exit;
-
-	crc = crc32(UBI_CRC32_INIT, vid_hdr, UBI_VID_HDR_SIZE_CRC);
-	hdr_crc = be32_to_cpu(vid_hdr->hdr_crc);
-	if (hdr_crc != crc) {
-		ubi_err(ubi, "bad VID header CRC at PEB %d, calculated %#08x, read %#08x",
-			pnum, crc, hdr_crc);
-		ubi_err(ubi, "self-check failed for PEB %d", pnum);
-		ubi_dump_vid_hdr(vid_hdr);
-		dump_stack();
-		err = -EINVAL;
-		goto exit;
-	}
 
 	err = self_check_vid_hdr(ubi, pnum, vid_hdr);
 

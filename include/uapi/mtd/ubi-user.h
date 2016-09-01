@@ -237,10 +237,16 @@ enum {
  *		      corruption.
  *		      In the other hand, this means UBI will only expose half
  *		      the capacity of the NAND.
+ * @UBI_VOL_MODE_MLC_SAFE: eraseblocks are used in SLC mode when they are being
+ *			   written and are consolidated in MLC mode in
+ *			   background. This allows us to maximize storage
+ *			   utilization while keeping it robust against paired
+ *			   page corruption
  */
 enum {
 	UBI_VOL_MODE_NORMAL,
 	UBI_VOL_MODE_SLC,
+	UBI_VOL_MODE_MLC_SAFE,
 };
 
 /*
@@ -311,8 +317,11 @@ struct ubi_attach_req {
  * @alignment: volume alignment
  * @bytes: volume size in bytes
  * @vol_type: volume type (%UBI_DYNAMIC_VOLUME or %UBI_STATIC_VOLUME)
- * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL or %UBI_VOL_MODE_SLC)
+ * @vol_mode: volume mode (%UBI_VOL_MODE_NORMAL, %UBI_VOL_MODE_SLC or
+ *			   %UBI_VOL_MODE_MLC_SAFE)
  * @name_len: volume name length
+ * @slc_ratio: SLC vs MLC PEBs ratio. Only valid when vol_mode is set to
+ *	       %UBI_VOL_MODE_MLC_SAFE
  * @padding2: reserved for future, not used, has to be zeroed
  * @name: volume name
  *
@@ -342,7 +351,8 @@ struct ubi_mkvol_req {
 	__s8 vol_type;
 	__s8 vol_mode;
 	__s16 name_len;
-	__s8 padding2[4];
+	__u8 slc_ratio;
+	__s8 padding2[3];
 	char name[UBI_MAX_VOLUME_NAME + 1];
 } __packed;
 

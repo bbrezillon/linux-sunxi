@@ -354,7 +354,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 
 	pdesc->pnum = pnum;
 	pdesc->vol_id = vol_id;
-	pdesc->lnum = lnum;
+	pdesc->lnums[0] = lnum;
 
 	return schedule_erase(ubi, pdesc, torture, true);
 }

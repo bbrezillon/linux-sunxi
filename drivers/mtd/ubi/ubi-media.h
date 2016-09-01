@@ -130,10 +130,16 @@ enum {
  *		      corruption.
  *		      In the other hand, this means UBI will only expose half
  *		      the capacity of the NAND.
+ * @UBI_VID_MODE_MLC_SAFE: eraseblocks are used in SLC mode when they are being
+ *			   written and are consolidated in MLC mode in
+ *			   background. This allows us to maximize storage
+ *			   utilization while keeping it robust against paired
+ *			   page corruption
  */
 enum {
 	UBI_VID_MODE_NORMAL,
 	UBI_VID_MODE_SLC,
+	UBI_VID_MODE_MLC_SAFE,
 };
 
 /* Sizes of UBI headers */
@@ -190,6 +196,20 @@ struct ubi_ec_hdr {
 	__be32  hdr_crc;
 } __packed;
 
+/*
+ * Magic lpos value to tell the implementation that the VID header is a
+ * dummy header and that the real headers are placed at the end of the
+ * PEB.
+ * This is set when consolidating several LEBs in an MLC PEB.
+ */
+#define UBI_VID_LPOS_CONSOLIDATED	0xff
+
+/*
+ * Mark a VID header as invalid. Useful when we are copying a PEB containing
+ * LEBs that have been invalidated.
+ */
+#define UBI_VID_LPOS_INVALID		0xfe
+
 /**
  * struct ubi_vid_hdr - on-flash UBI volume identifier header.
  * @magic: volume identifier header magic number (%UBI_VID_HDR_MAGIC)
@@ -204,6 +224,7 @@ struct ubi_ec_hdr {
  * @vol_id: ID of this volume
  * @lnum: logical eraseblock number
  * @vol_mode: mode of this volume (%UBI_VID_MODE_NORMAL or %UBI_VID_MODE_SLC)
+ * @lpos: LEB position in the PEB.
  * @padding1: reserved for future, zeroes
  * @data_size: how many bytes of data this logical eraseblock contains
  * @used_ebs: total number of used logical eraseblocks in this volume
@@ -310,7 +331,8 @@ struct ubi_vid_hdr {
 	__be32  vol_id;
 	__be32  lnum;
 	__u8	vol_mode;
-	__u8    padding1[3];
+	__u8	lpos;
+	__u8    padding1[2];
 	__be32  data_size;
 	__be32  used_ebs;
 	__be32  data_pad;
@@ -362,8 +384,15 @@ struct ubi_vid_hdr {
  * @name_len: volume name length
  * @name: the volume name
  * @flags: volume flags (%UBI_VTBL_AUTORESIZE_FLG)
- * @vol_mode: volume mode (%UBI_VID_MODE_NORMAL or %UBI_VID_MODE_SLC)
- * @padding: reserved, zeroes
+ * @vol_mode: volume mode (%UBI_VID_MODE_NORMAL, %UBI_VID_MODE_SLC or
+ *	      %UBI_VID_MODE_MLC_SAFE)
+ * @slc_ratio: SLC vs MLC LEBs ratio. Only applicable when vol_mode is set to
+ *	       %UBI_VID_MODE_MLC_SAFE
+ * @padding1: reserved, zeroes
+ * @reserved_lebs: how many logical eraseblocks are reserved for this volume.
+ *		   Should be zero unless vol_mode is set to
+ *		   %UBI_VID_MODE_MLC_SAFE.
+ * @padding2: reserved, zeroes
  * @crc: a CRC32 checksum of the record
  *
  * The volume table records are stored in the volume table, which is stored in
@@ -400,7 +429,10 @@ struct ubi_vtbl_record {
 	__u8    name[UBI_VOL_NAME_MAX+1];
 	__u8    flags;
 	__u8	vol_mode;
-	__u8    padding[22];
+	__u8	slc_ratio;
+	__u8    padding1[1];
+	__be32	reserved_lebs;
+	__u8    padding2[16];
 	__be32  crc;
 } __packed;
 
@@ -417,6 +449,7 @@ struct ubi_vtbl_record {
 #define UBI_FM_VHDR_MAGIC	0xFA370ED1
 #define UBI_FM_POOL_MAGIC	0x67AF4D08
 #define UBI_FM_EBA_MAGIC	0xf0c040a8
+#define UBI_FM_EBA_CONSO_MAGIC	0xc035011d
 
 /* A fastmap supber block can be located between PEB 0 and
  * UBI_FM_MAX_START */
@@ -505,12 +538,14 @@ struct ubi_fm_ec {
 	__be32 ec;
 } __packed;
 
+
 /**
  * struct ubi_fm_volhdr - Fastmap volume header
  * it identifies the start of an eba table
  * @magic: Fastmap volume header magic number (%UBI_FM_VHDR_MAGIC)
  * @vol_id: volume id of the fastmapped volume
  * @vol_type: type of the fastmapped volume
+ * @vol_mode: volume mode
  * @data_pad: data_pad value of the fastmapped volume
  * @used_ebs: number of used LEBs within this volume
  * @last_eb_bytes: number of bytes used in the last LEB
@@ -519,7 +554,8 @@ struct ubi_fm_volhdr {
 	__be32 magic;
 	__be32 vol_id;
 	__u8 vol_type;
-	__u8 padding1[3];
+	__u8 vol_mode;
+	__u8 padding1[2];
 	__be32 data_pad;
 	__be32 used_ebs;
 	__be32 last_eb_bytes;
@@ -539,4 +575,15 @@ struct ubi_fm_eba {
 	__be32 reserved_pebs;
 	__be32 pnum[0];
 } __packed;
+
+/**
+ * struct ubi_fm_eba_conso - extension of the EBA table for MLC safe volumes
+ * @magic: EBA consolidated magic number
+ * @lpos: positions of LEBs inside a PEBs
+ */
+struct ubi_fm_eba_conso {
+	__be32 magic;
+	__be32 lpos[0];
+};
+
 #endif /* !__UBI_MEDIA_H__ */

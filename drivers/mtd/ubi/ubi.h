@@ -118,6 +118,7 @@ enum {
 	UBI_IO_BAD_HDR,
 	UBI_IO_BAD_HDR_EBADMSG,
 	UBI_IO_BITFLIPS,
+	UBI_IO_INCOMPLETE_CONSO,
 };
 
 /*
@@ -187,11 +188,13 @@ enum ubi_io_mode {
 /**
  * struct ubi_vid_io_buf - VID buffer used to read/write VID info to/from the
  *			   flash.
+ * @nhdrs: number of headers
  * @hdr: a pointer to the VID header stored in buffer
  * @buffer: underlying buffer
  */
 struct ubi_vid_io_buf {
-	struct ubi_vid_hdr *hdr;
+	int nhdrs;
+	struct ubi_vid_hdr *hdrs;
 	void *buffer;
 };
 
@@ -293,25 +296,28 @@ struct ubi_fm_pool {
 	int max_size;
 };
 
+#define UBI_EBA_NA	-1
+
 /**
  * struct ubi_peb_desc - physical eraseblock descriptor
  * @pnum: the physical eraseblock number
  * @vol_id: the volume this PEB is attached to or %UBI_ALL if this PEB is
  *	    not attached to any volume
- * @lnum: the logical eraseblock contained in this PEB
+ * @lnums: the logical eraseblocks contained in this PEB
  *
  * This structure is describing a PEB and its content.
  */
 struct ubi_peb_desc {
 	int pnum;
 	int vol_id;
-	int lnum;
+	int lnums[0];
 };
 
 /**
  * struct ubi_eba_leb_desc - EBA logical eraseblock descriptor
  * @lnum: the logical eraseblock number
  * @pnum: the physical eraseblock where the LEB can be found
+ * @lpos: LEB position in the PEB
  *
  * This structure is here to hide EBA's internal from other part of the
  * UBI implementation.
@@ -321,6 +327,42 @@ struct ubi_peb_desc {
 struct ubi_eba_leb_desc {
 	int lnum;
 	int pnum;
+	int lpos;
+};
+
+/**
+ * struct ubi_consolidated_peb - structure storing consolidated PEB information
+ * @pnum: the physical eraseblock number
+ * @lnums: the LEBs stored in this PEB
+ */
+struct ubi_consolidated_peb {
+	int pnum;
+	int lnums[0];
+};
+
+/**
+ * struct ubi_consolidation - UBI consolidation context
+ * @work: work attached to this consolidation worker
+ * @cancel: whether the current consolidation should be cancelled or not
+ * @dst: destination PEB info
+ * @src: source LEB info
+ * @buf: temporary buffer
+ * @vol: UBI volume attached to the consolidation worker
+ */
+struct ubi_consolidation {
+	struct work_struct work;
+	struct mutex lock;
+	bool cancel;
+	struct {
+		struct ubi_consolidated_peb *cpeb;
+		struct ubi_eba_leb_desc ldesc;
+	} dst;
+	struct {
+		struct ubi_eba_leb_desc ldesc;
+		int loffset;
+	} src;
+	void *buf;
+	struct ubi_volume *vol;
 };
 
 /**
@@ -390,8 +432,10 @@ struct ubi_volume {
 	int metaonly;
 
 	int reserved_pebs;
+	int reserved_lebs;
 	int vol_type;
 	int vol_mode;
+	int slc_ratio;
 	int leb_size;
 	int usable_leb_size;
 	int used_ebs;
@@ -412,6 +456,8 @@ struct ubi_volume {
 	struct rb_root ltree;
 
 	struct ubi_eba_table *eba_tbl;
+	const struct ubi_eba_table_ops *eba_tbl_ops;
+	struct ubi_consolidation *conso;
 	unsigned int checked:1;
 	unsigned int corrupted:1;
 	unsigned int upd_marker:1;
@@ -714,6 +760,18 @@ struct ubi_ainf_leb {
 	struct ubi_ainf_peb *peb;
 };
 
+
+struct ubi_ainf_mleb {
+	int refcnt;
+	struct ubi_consolidated_peb *cpeb;
+};
+
+
+struct ubi_ainf_sleb {
+	int pnum;
+	int lnum;
+};
+
 /**
  * struct ubi_ainf_peb - attach information about a physical eraseblock.
  * @node: link in one of the eraseblock lists
@@ -732,14 +790,14 @@ struct ubi_ainf_leb {
 struct ubi_ainf_peb {
 	struct list_head node;
 	int ec;
-	int pnum;
 	int vol_id;
-	union {
-		int refcnt;
-		int lnum;
-	};
 	unsigned int scrub:1;
+	unsigned int consolidated:1;
 	unsigned long long sqnum;
+	union {
+		struct ubi_ainf_mleb mleb;
+		struct ubi_ainf_sleb sleb;
+	};
 };
 
 /**
@@ -912,8 +970,10 @@ extern struct blocking_notifier_head ubi_notifiers;
 
 /* attach.c */
 struct ubi_ainf_peb *ubi_alloc_apeb(struct ubi_attach_info *ai, int pnum,
-				   int ec);
+				    int ec);
 void ubi_free_apeb(struct ubi_attach_info *ai, struct ubi_ainf_peb *apeb);
+struct ubi_peb_desc *ubi_apeb_to_pdesc(struct ubi_device *ubi,
+				       const struct ubi_ainf_peb *apeb);
 struct ubi_ainf_leb *ubi_alloc_aleb(struct ubi_attach_info *ai,
 				    struct ubi_ainf_peb *apeb,
 				    int lnum,
@@ -938,6 +998,41 @@ ubi_ainf_leb_sqnum(const struct ubi_ainf_leb *aleb)
 	return aleb->peb->sqnum;
 }
 
+
+static inline int ubi_ainf_get_pnum(const struct ubi_ainf_peb *peb)
+{
+	if (!peb->consolidated)
+		return peb->sleb.pnum;
+
+	return peb->mleb.cpeb->pnum;
+}
+
+static inline int ubi_ainf_dec_apeb_refcnt(struct ubi_ainf_peb *peb)
+{
+	/*
+	 * If the PEB is not consolidated we have a single user,
+	 * and decrementing the refcount always implies releasing
+	 * a refcount of zero.
+	 */
+	if (!peb->consolidated)
+		return 0;
+
+	return --peb->mleb.refcnt;
+}
+
+static inline void ubi_ainf_in_apeb_refcnt(struct ubi_ainf_peb *peb)
+{
+	/*
+	 * If the PEB is not consolidated we have a single user,
+	 * and decrementing the refcount always implies releasing
+	 * a refcount of zero.
+	 */
+	if (!peb->consolidated)
+		return;
+
+	peb->mleb.refcnt++;
+}
+
 /* vtbl.c */
 int ubi_change_vtbl_record(struct ubi_device *ubi, int idx,
 			   struct ubi_vtbl_record *vtbl_rec);
@@ -952,6 +1047,8 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs);
 int ubi_rename_volumes(struct ubi_device *ubi, struct list_head *rename_list);
 int ubi_add_volume(struct ubi_device *ubi, struct ubi_volume *vol);
 void ubi_free_volume(struct ubi_device *ubi, struct ubi_volume *vol);
+int ubi_calc_avail_lebs(struct ubi_volume *vol, int rsvd_pebs);
+int ubi_calc_rsvd_pebs(struct ubi_volume *vol, int lebs);
 
 /* upd.c */
 int ubi_start_update(struct ubi_device *ubi, struct ubi_volume *vol,
@@ -973,13 +1070,27 @@ int ubi_check_pattern(const void *buf, uint8_t patt, int size);
 
 static inline bool ubi_leb_valid(struct ubi_volume *vol, int lnum)
 {
-	return lnum >= 0 && lnum < vol->reserved_pebs;
+	return lnum >= 0 && lnum < vol->reserved_lebs;
 }
 
 static inline struct ubi_peb_desc *ubi_alloc_pdesc(struct ubi_device *ubi,
 						   gfp_t gfp_flags)
 {
-	return kzalloc(sizeof(struct ubi_peb_desc), gfp_flags);
+	struct ubi_peb_desc *pdesc;
+	int size = sizeof(struct ubi_peb_desc) +
+		   (sizeof(int) * ubi->max_lebs_per_peb);
+	int i;
+
+	pdesc = kmalloc(size, gfp_flags);
+	if (!pdesc)
+		return NULL;
+
+	pdesc->pnum = UBI_UNKNOWN;
+	pdesc->vol_id = UBI_UNKNOWN;
+	for (i = 0; i < ubi->max_lebs_per_peb; i++)
+		pdesc->lnums[i] = UBI_UNKNOWN;
+
+	return pdesc;
 }
 
 static inline void ubi_free_pdesc(const struct ubi_peb_desc *pdesc)
@@ -990,7 +1101,8 @@ static inline void ubi_free_pdesc(const struct ubi_peb_desc *pdesc)
 /* eba.c */
 struct ubi_eba_table *ubi_eba_create_table(struct ubi_volume *vol,
 					   int nentries);
-void ubi_eba_destroy_table(struct ubi_eba_table *tbl);
+void ubi_eba_destroy_table(const struct ubi_volume *vol,
+			   struct ubi_eba_table *tbl);
 void ubi_eba_copy_table(struct ubi_volume *vol, struct ubi_eba_table *dst,
 			int nentries);
 void ubi_eba_replace_table(struct ubi_volume *vol, struct ubi_eba_table *tbl);
@@ -1013,9 +1125,20 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		     struct ubi_vid_io_buf *vidb);
 int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai);
+unsigned long long ubi_next_sqnums(struct ubi_device *ubi, int num);
 unsigned long long ubi_next_sqnum(struct ubi_device *ubi);
 int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 		   struct ubi_attach_info *ai_scan);
+
+/* conso.c */
+#define UBI_MIN_SLC_LEBS	16
+#define UBI_MIN_SLC_MLC_RATIO	5
+
+void ubi_conso_cond_cancel(struct ubi_volume *vol, int lnum);
+void ubi_conso_schedule(struct ubi_volume *vol);
+void ubi_conso_rearm(struct ubi_volume *vol);
+int ubi_conso_init(struct ubi_volume *vol);
+void ubi_conso_cleanup(struct ubi_volume *vol);
 
 /* wl.c */
 int ubi_wl_get_peb(struct ubi_device *ubi);
@@ -1049,6 +1172,7 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 			struct ubi_vid_io_buf *vidb, int verbose);
 int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 			 struct ubi_vid_io_buf *vidb);
+void ubi_io_prepare_vid_hdr(struct ubi_device *ubi, struct ubi_vid_hdr *vidh);
 
 /* build.c */
 int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
@@ -1183,7 +1307,7 @@ static inline void ubi_remove_aleb(struct ubi_ainf_volume *av,
 
 	rb_erase(&aleb->node, &av->root);
 
-	if (!--apeb->refcnt)
+	if (!ubi_ainf_dec_apeb_refcnt(apeb))
 		list_add_tail(&apeb->node, list);
 }
 
@@ -1201,7 +1325,7 @@ static inline void ubi_init_vid_buf(const struct ubi_device *ubi,
 		memset(buf, 0, ubi->vid_hdr_alsize);
 
 	vidb->buffer = buf;
-	vidb->hdr = buf + ubi->vid_hdr_shift;
+	vidb->hdrs = buf + ubi->vid_hdr_shift;
 }
 
 /**
@@ -1249,7 +1373,16 @@ static inline void ubi_free_vid_buf(struct ubi_vid_io_buf *vidb)
  */
 static inline struct ubi_vid_hdr *ubi_get_vid_hdr(struct ubi_vid_io_buf *vidb)
 {
-	return vidb->hdr;
+	return vidb->hdrs;
+}
+
+/**
+ * ubi_get_nhdrs - Get the number of VID headers in the VID buffer
+ * @vidb: VID buffer
+ */
+static inline int ubi_get_nhdrs(struct ubi_vid_io_buf *vidb)
+{
+	return vidb->nhdrs;
 }
 
 /*
@@ -1308,6 +1441,8 @@ static inline int ubi_vol_mode_from_vid_hdr(const struct ubi_vid_hdr *vid_hdr)
 		return UBI_VOL_MODE_NORMAL;
 	case UBI_VID_MODE_SLC:
 		return UBI_VOL_MODE_SLC;
+	case UBI_VID_MODE_MLC_SAFE:
+		return UBI_VOL_MODE_MLC_SAFE;
 	default:
 		break;
 	}
@@ -1323,9 +1458,26 @@ static inline int ubi_vol_mode_to_io_mode(int vol_mode)
 {
 	switch (vol_mode) {
 	case UBI_VOL_MODE_NORMAL:
+	case UBI_VOL_MODE_MLC_SAFE:
 		return UBI_IO_MODE_NORMAL;
 	case UBI_VOL_MODE_SLC:
 		return UBI_IO_MODE_SLC;
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+static inline u8 ubi_vol_mode_to_vid_hdr(struct ubi_volume *vol)
+{
+	switch(vol->vol_mode) {
+	case UBI_VOL_MODE_NORMAL:
+		return UBI_VID_MODE_NORMAL;
+	case UBI_VOL_MODE_SLC:
+		return UBI_VID_MODE_SLC;
+	case UBI_VOL_MODE_MLC_SAFE:
+		return UBI_VID_MODE_MLC_SAFE;
 	default:
 		break;
 	}

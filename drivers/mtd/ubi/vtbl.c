@@ -79,6 +79,7 @@ static int ubi_update_layout_vol(struct ubi_device *ubi)
 	int i, err;
 
 	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
+
 	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
 		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
 						ubi->vtbl_size);
@@ -261,7 +262,8 @@ static int vtbl_check(const struct ubi_device *ubi,
 		}
 
 		if (vol_mode != UBI_VID_MODE_NORMAL &&
-		    vol_mode != UBI_VID_MODE_SLC) {
+		    vol_mode != UBI_VID_MODE_SLC &&
+		    vol_mode != UBI_VID_MODE_MLC_SAFE) {
 			err = 13;
 			goto bad;
 		}
@@ -305,7 +307,7 @@ bad:
 static int create_vtbl(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		       int copy, void *vtbl)
 {
-	int err, tries = 0;
+	int err, pnum, tries = 0;
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	struct ubi_ainf_peb *new_apeb;
@@ -326,6 +328,8 @@ retry:
 		goto out_free;
 	}
 
+	pnum = ubi_ainf_get_pnum(new_apeb);
+
 	if (ubi->version > 1 && ubi->max_lebs_per_peb) {
 		vid_hdr->vol_mode = UBI_VID_MODE_SLC;
 		io_mode = UBI_IO_MODE_SLC;
@@ -343,13 +347,12 @@ retry:
 	vid_hdr->sqnum = cpu_to_be64(++ai->max_sqnum);
 
 	/* The EC header is already there, write the VID header */
-	err = ubi_io_write_vid_hdr(ubi, new_apeb->pnum, vidb);
+	err = ubi_io_write_vid_hdr(ubi, pnum, vidb);
 	if (err)
 		goto write_error;
 
 	/* Write the layout volume contents */
-	err = ubi_io_write_data(ubi, vtbl, new_apeb->pnum, 0, ubi->vtbl_size,
-				io_mode);
+	err = ubi_io_write_data(ubi, vtbl, pnum, 0, ubi->vtbl_size, io_mode);
 	if (err)
 		goto write_error;
 
@@ -432,14 +435,18 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 
 	/* Read both LEB 0 and LEB 1 into memory */
 	ubi_rb_for_each_entry(rb, aleb, &av->root, node) {
+		int pnum;
+
 		leb[aleb->lnum] = vzalloc(ubi->vtbl_size);
 		if (!leb[aleb->lnum]) {
 			err = -ENOMEM;
 			goto out_free;
 		}
 
-		err = ubi_io_read_data(ubi, leb[aleb->lnum], aleb->peb->pnum,
-				       0, ubi->vtbl_size, io_mode);
+		pnum = ubi_ainf_get_pnum(aleb->peb);
+
+		err = ubi_io_read_data(ubi, leb[aleb->lnum], pnum, 0,
+				       ubi->vtbl_size, io_mode);
 		if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err))
 			/*
 			 * Scrub the PEB later. Note, -EBADMSG indicates an
@@ -561,6 +568,8 @@ static int init_volumes(struct ubi_device *ubi,
 	struct ubi_volume *vol;
 
 	for (i = 0; i < ubi->vtbl_slots; i++) {
+		int rsvd_lebs;
+
 		cond_resched();
 
 		if (be32_to_cpu(vtbl[i].reserved_pebs) == 0)
@@ -571,6 +580,10 @@ static int init_volumes(struct ubi_device *ubi,
 			return -ENOMEM;
 
 		vol->reserved_pebs = be32_to_cpu(vtbl[i].reserved_pebs);
+		vol->reserved_lebs = be32_to_cpu(vtbl[i].reserved_lebs);
+		if (!vol->reserved_lebs)
+			vol->reserved_lebs = vol->reserved_pebs;
+
 		vol->alignment = be32_to_cpu(vtbl[i].alignment);
 		vol->data_pad = be32_to_cpu(vtbl[i].data_pad);
 		vol->upd_marker = vtbl[i].upd_marker;
@@ -581,6 +594,12 @@ static int init_volumes(struct ubi_device *ubi,
 			vol->leb_size = (ubi->peb_size /
 					 ubi->max_lebs_per_peb) -
 					ubi->leb_start;
+		} else if (vtbl[i].vol_mode == UBI_VID_MODE_MLC_SAFE) {
+			vol->vol_mode = UBI_VOL_MODE_MLC_SAFE;
+			vol->leb_size = (ubi->peb_size /
+					 ubi->max_lebs_per_peb) -
+					ubi->leb_start;
+			vol->slc_ratio = vtbl[i].slc_ratio;
 		} else {
 			vol->vol_mode = UBI_VOL_MODE_NORMAL;
 			vol->leb_size = ubi->leb_size;
@@ -609,12 +628,17 @@ static int init_volumes(struct ubi_device *ubi,
 		vol->ubi = ubi;
 		reserved_pebs += vol->reserved_pebs;
 
+		rsvd_lebs = ubi_calc_avail_lebs(vol, vol->reserved_pebs);
+
 		/*
 		 * In case of dynamic volume UBI knows nothing about how many
 		 * data is stored there. So assume the whole volume is used.
 		 */
 		if (vol->vol_type == UBI_DYNAMIC_VOLUME) {
-			vol->used_ebs = vol->reserved_pebs;
+			vol->used_ebs = vol->reserved_lebs;
+			if (vol->used_ebs < 0)
+				return vol->used_ebs;
+
 			vol->last_eb_bytes = vol->usable_leb_size;
 			vol->used_bytes =
 				(long long)vol->used_ebs * vol->usable_leb_size;
@@ -662,6 +686,7 @@ static int init_volumes(struct ubi_device *ubi,
 	ubi_assert(av);
 
 	vol->reserved_pebs = UBI_LAYOUT_VOLUME_EBS;
+	vol->reserved_lebs = vol->reserved_pebs;
 	vol->alignment = UBI_LAYOUT_VOLUME_ALIGN;
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
 	vol->vol_mode = av->vol_mode;
@@ -672,8 +697,8 @@ static int init_volumes(struct ubi_device *ubi,
 		vol->leb_size = ubi->leb_size;
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
 	memcpy(vol->name, UBI_LAYOUT_VOLUME_NAME, vol->name_len + 1);
-	vol->used_ebs = vol->reserved_pebs;
-	vol->last_eb_bytes = vol->reserved_pebs;
+	vol->used_ebs = vol->reserved_lebs;
+	vol->last_eb_bytes = vol->reserved_lebs;
 	vol->usable_leb_size = vol->leb_size;
 	vol->used_bytes =
 		(long long)vol->used_ebs * (vol->leb_size - vol->data_pad);
@@ -713,11 +738,11 @@ static int check_av(const struct ubi_volume *vol,
 {
 	int err;
 
-	if (av->highest_lnum >= vol->reserved_pebs) {
+	if (av->highest_lnum >= vol->reserved_lebs) {
 		err = 1;
 		goto bad;
 	}
-	if (av->leb_count > vol->reserved_pebs) {
+	if (av->leb_count > vol->reserved_lebs) {
 		err = 2;
 		goto bad;
 	}
@@ -725,7 +750,7 @@ static int check_av(const struct ubi_volume *vol,
 		err = 3;
 		goto bad;
 	}
-	if (av->used_ebs > vol->reserved_pebs) {
+	if (av->used_ebs > vol->reserved_lebs) {
 		err = 4;
 		goto bad;
 	}
