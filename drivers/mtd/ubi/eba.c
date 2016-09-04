@@ -54,7 +54,7 @@ struct ubi_eba_table_ops {
 	void (*destroy)(struct ubi_eba_table *tbl);
 	void (*copy)(struct ubi_volume *vol, struct ubi_eba_table *dst,
 		     int nentries);
-	int (*get_peb)(struct ubi_volume *vol);
+	int (*get_peb)(struct ubi_volume *vol, struct ubi_eba_leb_desc *ldesc);
 	int (*put_peb)(struct ubi_volume *vol,
 		       const struct ubi_eba_leb_desc *ldesc, int torture);
 	void (*get_ldesc)(struct ubi_volume *vol, int lnum,
@@ -63,6 +63,8 @@ struct ubi_eba_table_ops {
 				 const struct ubi_eba_leb_desc *ldesc);
 	void (*update_entry)(struct ubi_volume *vol,
 			     const struct ubi_eba_leb_desc *ldesc);
+	int (*prepare_leb_write)(struct ubi_volume *vol,
+				 struct ubi_eba_leb_desc *ldesc, int offset);
 };
 
 struct ubi_eba_table {
@@ -181,14 +183,26 @@ static int ubi_get_compat(const struct ubi_device *ubi, int vol_id)
 	return 0;
 }
 
-static int ubi_eba_normal_get_peb(struct ubi_volume *vol)
+static int ubi_eba_normal_get_peb(struct ubi_volume *vol,
+				  struct ubi_eba_leb_desc *ldesc)
 {
-	return ubi_wl_get_peb(vol->ubi);
+	int pnum;
+
+	pnum = ubi_wl_get_peb(vol->ubi);
+	if (pnum < 0)
+		return pnum;
+
+	ldesc->lpos = UBI_EBA_NA;
+	ldesc->pnum = pnum;
+
+	return 0;
 }
 
-static int ubi_eba_mlc_get_peb(struct ubi_volume *vol)
+static int ubi_eba_mlc_get_peb(struct ubi_volume *vol,
+			       struct ubi_eba_leb_desc *ldesc)
 {
 	struct ubi_eba_mlc_table *tbl;
+	int pnum;
 
 	tbl = to_mlc_table(vol->eba_tbl);
 
@@ -201,12 +215,25 @@ static int ubi_eba_mlc_get_peb(struct ubi_volume *vol)
 	tbl->free_pebs--;
 	mutex_unlock(&tbl->lock);
 
-	return ubi_wl_get_peb(vol->ubi);
+	pnum = ubi_wl_get_peb(vol->ubi);
+	if (pnum < 0) {
+		mutex_lock(&tbl->lock);
+		tbl->free_pebs++;
+		mutex_unlock(&tbl->lock);
+
+		return pnum;
+	}
+
+	ldesc->lpos = UBI_EBA_NA;
+	ldesc->pnum = pnum;
+
+	return 0;
 }
 
-static int ubi_eba_get_peb(struct ubi_volume *vol)
+static int ubi_eba_get_peb(struct ubi_volume *vol,
+			   struct ubi_eba_leb_desc *ldesc)
 {
-	return vol->eba_tbl->ops->get_peb(vol);
+	return vol->eba_tbl->ops->get_peb(vol, ldesc);
 }
 
 static int ubi_eba_normal_put_peb(struct ubi_volume *vol,
@@ -231,7 +258,6 @@ static int ubi_eba_mlc_put_peb(struct ubi_volume *vol,
 
 	return ubi_wl_put_peb(vol->ubi, vol->vol_id, ldesc->lnum, ldesc->pnum,
 			      torture);
-	
 }
 
 static int ubi_eba_put_peb(struct ubi_volume *vol,
@@ -936,7 +962,7 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	release_peb = ubi_eba_invalidate_entry(vol, &ldesc);
 	up_read(&ubi->fm_eba_sem);
 	if (release_peb)
-		err = ubi_wl_put_peb(ubi, vol_id, lnum, ldesc.pnum, 0);
+		err = ubi_eba_put_peb(vol, &ldesc, 0);
 
 out_unlock:
 	leb_write_unlock(ubi, vol_id, lnum);
@@ -1431,6 +1457,83 @@ out_put:
 }
 
 /**
+ */
+
+static int normal_prepare_leb_write(struct ubi_volume *vol,
+				    struct ubi_eba_leb_desc *ldesc,
+				    int len)
+{
+	return 0;
+}
+
+static int mlc_prepare_leb_write(struct ubi_volume *vol,
+				 struct ubi_eba_leb_desc *ldesc,
+				 int len)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_vid_io_buf vidb;
+	struct ubi_vid_hdr *vid_hdr;
+	void *buf = ubi->peb_buf + ubi->leb_start;
+	int err, vol_id = vol->vol_id, lnum = ldesc->lnum, tries;
+	u32 crc;
+
+	/* The LEB is already  */
+	if (ldesc->pnum == UBI_LEB_UNMAPPED || ldesc->lpos == UBI_EBA_NA)
+		return 0;
+
+	/* First read the existing data */
+	mutex_lock(&ubi->buf_mutex);
+	ubi_init_vid_buf(ubi, &vidb, ubi->peb_buf + ubi->vid_hdr_offset);
+	vid_hdr = ubi_get_vid_hdr(&vidb);
+	err = read_leb_data(vol, ldesc, buf, 0, len);
+	if (err && err != UBI_IO_BITFLIPS)
+		goto out_unlock_buf;
+
+	/* Initialize the VID header */
+	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
+	vid_hdr->vol_id = cpu_to_be32(vol_id);
+	vid_hdr->lnum = cpu_to_be32(lnum);
+	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
+	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
+	crc = crc32(UBI_CRC32_INIT, buf, len);
+	vid_hdr->vol_type = UBI_VID_DYNAMIC;
+	vid_hdr->data_size = cpu_to_be32(len);
+	vid_hdr->copy_flag = 1;
+	vid_hdr->data_crc = cpu_to_be32(crc);
+
+	for (tries = 0; tries <= UBI_IO_RETRIES; tries++) {
+		err = try_write_vid_and_data(vol, ldesc->lnum, &vidb, buf, 0,
+					     len);
+		if (err != -EIO || !ubi->bad_allowed)
+			break;
+
+		/*
+		 * Fortunately, this is the first write operation to this
+		 * physical eraseblock, so just put it and request a new one.
+		 * We assume that if this physical eraseblock went bad, the
+		 * erase code will handle that.
+		 */
+		vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
+		ubi_msg(ubi, "try another PEB");
+	}
+
+out_unlock_buf:
+	mutex_unlock(&ubi->buf_mutex);
+
+	/* Update the LEB descriptor. */
+	if (!err)
+		ubi_eba_get_ldesc(vol, lnum, ldesc);
+
+	return err;
+}
+
+static int prepare_leb_write(struct ubi_volume *vol,
+			     struct ubi_eba_leb_desc *ldesc, int offset)
+{
+	return vol->eba_tbl->ops->prepare_leb_write(vol, ldesc, offset);
+}
+
+/**
  * ubi_eba_write_leb - write data to dynamic volume.
  * @ubi: UBI device description object
  * @vol: volume description object
@@ -1464,6 +1567,11 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 		return err;
 
 	ubi_eba_get_ldesc(vol, lnum, &ldesc);
+
+	err = prepare_leb_write(vol, &ldesc, offset);
+	if (err)
+		goto out;
+
 	if (ldesc.pnum >= 0) {
 		dbg_eba("write %d bytes at offset %d of LEB %d:%d, PEB %d",
 			len, offset, vol_id, lnum, ldesc.pnum);
