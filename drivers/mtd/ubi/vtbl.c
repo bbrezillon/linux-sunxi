@@ -79,6 +79,7 @@ static int ubi_update_layout_vol(struct ubi_device *ubi)
 	int i, err;
 
 	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
+	pr_info("%s:%i vol_mode = %d\n", __func__, __LINE__, layout_vol->vol_mode);
 	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
 		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
 						ubi->vtbl_size);
@@ -333,6 +334,9 @@ retry:
 		vid_hdr->vol_mode = UBI_VID_MODE_NORMAL;
 		io_mode = UBI_IO_MODE_NORMAL;
 	}
+
+	pr_info("%s:%i iomode = %d vol_mode = %d\n",
+		__func__, __LINE__, io_mode, vid_hdr->vol_mode);
 
 	vid_hdr->vol_type = UBI_LAYOUT_VOLUME_TYPE;
 	vid_hdr->vol_id = cpu_to_be32(UBI_LAYOUT_VOLUME_ID);
@@ -665,6 +669,7 @@ static int init_volumes(struct ubi_device *ubi,
 	vol->alignment = UBI_LAYOUT_VOLUME_ALIGN;
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
 	vol->vol_mode = av->vol_mode;
+	pr_info("%s:%i vol_mode = %d\n", __func__, __LINE__, vol->vol_mode);
 	if (vol->vol_mode == UBI_VOL_MODE_SLC)
 		vol->leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
 				ubi->leb_start;

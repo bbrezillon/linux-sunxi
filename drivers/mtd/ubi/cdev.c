@@ -867,6 +867,7 @@ static long ubi_cdev_ioctl(struct file *file, unsigned int cmd,
 			break;
 		}
 
+		req.vol_mode = UBI_VOL_MODE_SLC;
 		err = verify_mkvol_req(ubi, &req);
 		if (err)
 			break;
