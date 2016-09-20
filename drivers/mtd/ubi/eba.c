@@ -102,6 +102,24 @@ static int ubi_get_compat(const struct ubi_device *ubi, int vol_id)
 }
 
 /**
+ * ubi_vid_hdr_fill_vol_info - fill a VID header with volume information
+ * @vol: volume description object
+ * @vid_hdr: VID header to fill
+ */
+static void ubi_vid_hdr_fill_vol_info(const struct ubi_volume *vol,
+				      struct ubi_vid_hdr *vid_hdr)
+{
+	if (vol->vol_type == UBI_STATIC_VOLUME)
+		vid_hdr->vol_type = UBI_VID_STATIC;
+	else
+		vid_hdr->vol_type = UBI_VID_DYNAMIC;
+
+	vid_hdr->vol_id = cpu_to_be32(vol->vol_id);
+	vid_hdr->compat = ubi_get_compat(vol->ubi, vol->vol_id);
+	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
+}
+
+/**
  * ubi_eba_get_ldesc - get information about a LEB
  * @vol: volume description object
  * @lnum: logical eraseblock number
@@ -930,12 +948,9 @@ int ubi_eba_write_leb(struct ubi_device *ubi, struct ubi_volume *vol, int lnum,
 
 	vid_hdr = ubi_get_vid_hdr(vidb);
 
-	vid_hdr->vol_type = UBI_VID_DYNAMIC;
+	ubi_vid_hdr_fill_vol_info(vol, vid_hdr);
 	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
-	vid_hdr->vol_id = cpu_to_be32(vol_id);
 	vid_hdr->lnum = cpu_to_be32(lnum);
-	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
-	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
 
 	for (tries = 0; tries <= UBI_IO_RETRIES; tries++) {
 		err = try_write_vid_and_data(vol, lnum, vidb, buf, offset, len);
@@ -1012,14 +1027,12 @@ int ubi_eba_write_leb_st(struct ubi_device *ubi, struct ubi_volume *vol,
 	if (err)
 		goto out;
 
+	ubi_vid_hdr_fill_vol_info(vol, vid_hdr);
+
 	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
-	vid_hdr->vol_id = cpu_to_be32(vol_id);
 	vid_hdr->lnum = cpu_to_be32(lnum);
-	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
-	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
 
 	crc = crc32(UBI_CRC32_INIT, buf, data_size);
-	vid_hdr->vol_type = UBI_VID_STATIC;
 	vid_hdr->data_size = cpu_to_be32(data_size);
 	vid_hdr->used_ebs = cpu_to_be32(used_ebs);
 	vid_hdr->data_crc = cpu_to_be32(crc);
@@ -1096,14 +1109,12 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 	if (err)
 		goto out_mutex;
 
+	ubi_vid_hdr_fill_vol_info(vol, vid_hdr);
+
 	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
-	vid_hdr->vol_id = cpu_to_be32(vol_id);
 	vid_hdr->lnum = cpu_to_be32(lnum);
-	vid_hdr->compat = ubi_get_compat(ubi, vol_id);
-	vid_hdr->data_pad = cpu_to_be32(vol->data_pad);
 
 	crc = crc32(UBI_CRC32_INIT, buf, len);
-	vid_hdr->vol_type = UBI_VID_DYNAMIC;
 	vid_hdr->data_size = cpu_to_be32(len);
 	vid_hdr->copy_flag = 1;
 	vid_hdr->data_crc = cpu_to_be32(crc);
