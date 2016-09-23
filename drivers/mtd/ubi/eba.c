@@ -455,7 +455,8 @@ bool ubi_eba_is_mapped(struct ubi_volume *vol, int lnum)
 int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		      int lnum)
 {
-	int err, pnum, vol_id = vol->vol_id;
+	int err, vol_id = vol->vol_id, pnum;
+	struct ubi_peb_desc *pdesc;
 
 	if (ubi->ro_mode)
 		return -EROFS;
@@ -469,12 +470,22 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 		/* This logical eraseblock is already unmapped */
 		goto out_unlock;
 
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc) {
+		err = -ENOMEM;
+		goto out_unlock;
+	}
+
+	pdesc->vol_id = vol->vol_id;
+	pdesc->lnum = lnum;
+	pdesc->pnum = pnum;
+
 	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, pnum);
 
 	down_read(&ubi->eba_sem);
 	vol->eba_tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
 	up_read(&ubi->eba_sem);
-	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
+	err = ubi_wl_put_peb(ubi, pdesc, 0);
 
 out_unlock:
 	leb_write_unlock(vol, lnum);
@@ -710,11 +721,19 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 			   struct ubi_vid_io_buf *vidb, bool *retry)
 {
 	struct ubi_device *ubi = vol->ubi;
-	struct ubi_vid_hdr *vid_hdr;
-	int new_pnum, err, vol_id = vol->vol_id, data_size;
+	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
+	int new_pnum, err, data_size;
+	struct ubi_peb_desc *pdesc;
 	uint32_t crc;
 
 	*retry = false;
+
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc)
+		return -ENOMEM;
+
+	pdesc->lnum = lnum;
+	pdesc->vol_id = vol->vol_id;
 
 	new_pnum = ubi_wl_get_peb(ubi);
 	if (new_pnum < 0) {
@@ -771,15 +790,19 @@ out_put:
 	up_read(&ubi->eba_sem);
 
 	if (!err) {
-		ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
+		pdesc->pnum = pnum;
+		ubi_wl_put_peb(ubi, pdesc, 1);
 		ubi_msg(ubi, "data was successfully recovered");
 	} else if (new_pnum >= 0) {
 		/*
 		 * Bad luck? This physical eraseblock is bad too? Crud. Let's
 		 * try to get another one.
 		 */
-		ubi_wl_put_peb(ubi, vol_id, lnum, new_pnum, 1);
+		pdesc->pnum = new_pnum;
+		ubi_wl_put_peb(ubi, pdesc, 1);
 		ubi_warn(ubi, "failed to write to PEB %d", new_pnum);
+	} else {
+		ubi_free_pdesc(pdesc);
 	}
 
 	return err;
@@ -849,6 +872,14 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 {
 	struct ubi_device *ubi = vol->ubi;
 	int pnum, opnum, err, vol_id = vol->vol_id;
+	struct ubi_peb_desc *pdesc;
+
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc)
+		return -ENOMEM;
+
+	pdesc->lnum = lnum;
+	pdesc->vol_id = vol->vol_id;
 
 	pnum = ubi_wl_get_peb(ubi);
 	if (pnum < 0) {
@@ -883,10 +914,15 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 out_put:
 	up_read(&ubi->eba_sem);
 
-	if (err && pnum >= 0)
-		err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
-	else if (!err && opnum >= 0)
-		err = ubi_wl_put_peb(ubi, vol_id, lnum, opnum, 0);
+	if (err && pnum >= 0) {
+		pdesc->pnum = pnum;
+		err = ubi_wl_put_peb(ubi, pdesc, 1);
+	} else if (!err && opnum >= 0) {
+		pdesc->pnum = opnum;
+		err = ubi_wl_put_peb(ubi, pdesc, 0);
+	} else {
+		ubi_free_pdesc(pdesc);
+	}
 
 	return err;
 }
@@ -1003,7 +1039,7 @@ out:
 int ubi_eba_write_leb_st(struct ubi_device *ubi, struct ubi_volume *vol,
 			 int lnum, const void *buf, int len, int used_ebs)
 {
-	int err, tries, data_size = len, vol_id = vol->vol_id;
+	int err, tries, data_size = len;
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	uint32_t crc;

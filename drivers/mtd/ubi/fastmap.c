@@ -1230,7 +1230,7 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 		if (ubi_is_erase_work(ubi_wrk)) {
 			struct ubi_erase_work *ewrk = to_erase_work(ubi_wrk);
 
-			wl_e = ewrk->e;
+			wl_e = ubi->lookuptbl[ewrk->pdesc->pnum];
 			ubi_assert(wl_e);
 
 			fec = (struct ubi_fm_ec *)(fm_raw + fm_pos);

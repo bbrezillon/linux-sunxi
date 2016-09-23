@@ -324,6 +324,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 {
 	struct ubi_wl_entry *e;
 	int vol_id, pnum = fm_e->pnum;
+	struct ubi_peb_desc *pdesc;
 
 	dbg_wl("PEB %d", pnum);
 
@@ -346,7 +347,16 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 	mutex_unlock(&ubi->wl_lock);
 
 	vol_id = lnum ? UBI_FM_DATA_VOLUME_ID : UBI_FM_SB_VOLUME_ID;
-	return schedule_erase(ubi, e, vol_id, lnum, torture, true);
+
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc)
+		return -ENOMEM;
+
+	pdesc->pnum = pnum;
+	pdesc->vol_id = vol_id;
+	pdesc->lnum = lnum;
+
+	return schedule_erase(ubi, pdesc, torture, true);
 }
 
 static void ubi_fastmap_close(struct ubi_device *ubi)

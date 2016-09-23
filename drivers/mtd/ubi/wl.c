@@ -571,32 +571,33 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
 /**
  * schedule_erase - schedule an erase work.
  * @ubi: UBI device description object
- * @e: the WL entry of the physical eraseblock to erase
- * @vol_id: the volume ID that last used this PEB
- * @lnum: the last used logical eraseblock number for the PEB
+ * @pdesc: PEB descriptor
  * @torture: if the physical eraseblock has to be tortured
+ * @nested: true if schedule_erase() is called with ->work_sem held
  *
  * This function returns zero in case of success and a %-ENOMEM in case of
  * failure.
  */
-static int schedule_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
-			  int vol_id, int lnum, int torture, bool nested)
+static int schedule_erase(struct ubi_device *ubi,
+			  const struct ubi_peb_desc *pdesc, int torture,
+			  bool nested)
 {
 	struct ubi_erase_work *wrk;
+	struct ubi_wl_entry *e;
 
-	ubi_assert(e);
+	ubi_assert(pdesc);
+
+	e = ubi->lookuptbl[pdesc->pnum];
 
 	dbg_wl("schedule erasure of PEB %d, EC %d, torture %d",
-	       e->pnum, e->ec, torture);
+	       pdesc->pnum, e->ec, torture);
 
 	wrk = kmalloc(sizeof(*wrk), GFP_NOFS);
 	if (!wrk)
 		return -ENOMEM;
 
 	wrk->base.func = erase_worker;
-	wrk->e = e;
-	wrk->vol_id = vol_id;
-	wrk->lnum = lnum;
+	wrk->pdesc = pdesc;
 	wrk->torture = torture;
 
 	if (nested)
@@ -617,16 +618,15 @@ static int __erase_worker(struct ubi_device *ubi,
  * @torture: if the physical eraseblock has to be tortured
  *
  */
-static int do_sync_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
-			 int vol_id, int lnum, int torture)
+static int do_sync_erase(struct ubi_device *ubi,
+			 const struct ubi_peb_desc *pdesc, int torture)
 {
 	struct ubi_erase_work wrk;
+	struct ubi_wl_entry *e = ubi->lookuptbl[pdesc->pnum];
 
 	dbg_wl("sync erase of PEB %i", e->pnum);
 
-	wrk.e = e;
-	wrk.vol_id = vol_id;
-	wrk.lnum = lnum;
+	wrk.pdesc = pdesc;
 	wrk.torture = torture;
 
 	return __erase_worker(ubi, &wrk);
@@ -656,6 +656,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *w,
 	struct ubi_wl_entry *e1, *e2;
 	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
+	struct ubi_peb_desc *pdesc;
 	int dst_leb_clean = 0;
 
 	kfree(wrk);
@@ -878,7 +879,17 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *w,
 	ubi->move_to_put = ubi->wl_scheduled = 0;
 	mutex_unlock(&ubi->wl_lock);
 
-	err = do_sync_erase(ubi, e1, vol_id, lnum, 0);
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc) {
+		err = -ENOMEM;
+		goto out_ro;
+	}
+
+	pdesc->pnum = e1->pnum;
+	pdesc->lnum = lnum;
+	pdesc->vol_id = vol_id;
+
+	err = do_sync_erase(ubi, pdesc, 0);
 	if (err) {
 		if (e2)
 			wl_entry_destroy(ubi, e2);
@@ -890,9 +901,19 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *w,
 		 * Well, the target PEB was put meanwhile, schedule it for
 		 * erasure.
 		 */
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc) {
+			err = -ENOMEM;
+			goto out_ro;
+		}
+
+		pdesc->pnum = e2->pnum;
+		pdesc->lnum = lnum;
+		pdesc->vol_id = vol_id;
+
 		dbg_wl("PEB %d (LEB %d:%d) was put meanwhile, erase",
 		       e2->pnum, vol_id, lnum);
-		err = do_sync_erase(ubi, e2, vol_id, lnum, 0);
+		err = do_sync_erase(ubi, pdesc, 0);
 		if (err)
 			goto out_ro;
 	}
@@ -938,13 +959,33 @@ out_not_moved:
 	if (dst_leb_clean) {
 		ensure_wear_leveling(ubi, 1);
 	} else {
-		err = do_sync_erase(ubi, e2, vol_id, lnum, torture);
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc) {
+			err = -ENOMEM;
+			goto out_ro;
+		}
+
+		pdesc->pnum = e2->pnum;
+		pdesc->lnum = lnum;
+		pdesc->vol_id = vol_id;
+
+		err = do_sync_erase(ubi, pdesc, torture);
 		if (err)
 			goto out_ro;
 	}
 
 	if (erase) {
-		err = do_sync_erase(ubi, e1, vol_id, lnum, 1);
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc) {
+			err = -ENOMEM;
+			goto out_ro;
+		}
+
+		pdesc->pnum = e1->pnum;
+		pdesc->lnum = lnum;
+		pdesc->vol_id = vol_id;
+
+		err = do_sync_erase(ubi, pdesc, 1);
 		if (err)
 			goto out_ro;
 	}
@@ -1070,14 +1111,14 @@ out_unlock:
 static int __erase_worker(struct ubi_device *ubi,
 			  struct ubi_erase_work *wrk)
 {
-	struct ubi_wl_entry *e = wrk->e;
-	int pnum = e->pnum;
-	int vol_id = wrk->vol_id;
-	int lnum = wrk->lnum;
+	const struct ubi_peb_desc *pdesc = wrk->pdesc;
+	int pnum = pdesc->pnum;
+	int vol_id = pdesc->vol_id;
+	int lnum = pdesc->lnum;
+	struct ubi_wl_entry *e = ubi->lookuptbl[pnum];
 	int err, available_consumed = 0;
 
-	dbg_wl("erase PEB %d EC %d LEB %d:%d",
-	       pnum, e->ec, wrk->vol_id, wrk->lnum);
+	dbg_wl("erase PEB %d EC %d LEB %d:%d", pnum, e->ec, vol_id, lnum);
 
 	err = sync_erase(ubi, e, wrk->torture);
 	if (!err) {
@@ -1094,6 +1135,10 @@ static int __erase_worker(struct ubi_device *ubi,
 
 		/* And take care about wear-leveling */
 		err = ensure_wear_leveling(ubi, 1);
+
+		/* Free the PEB desc before leaving. */
+		ubi_free_pdesc(pdesc);
+
 		return err;
 	}
 
@@ -1104,12 +1149,17 @@ static int __erase_worker(struct ubi_device *ubi,
 		int err1;
 
 		/* Re-schedule the LEB for erasure */
-		err1 = schedule_erase(ubi, e, vol_id, lnum, 0, false);
+		err1 = schedule_erase(ubi, pdesc, 0, false);
 		if (err1) {
 			wl_entry_destroy(ubi, e);
 			err = err1;
 			goto out_ro;
 		}
+
+		/*
+		 * Do not free the PEB descriptor here: it has been passed to
+		 * a new work.
+		 */
 		return err;
 	}
 
@@ -1170,6 +1220,9 @@ static int __erase_worker(struct ubi_device *ubi,
 		ubi_warn(ubi, "last PEB from the reserve was used");
 	mutex_unlock(&ubi->volumes_lock);
 
+	/* Free the PEB descriptor before leaving. */
+	ubi_free_pdesc(pdesc);
+
 	return err;
 
 out_ro:
@@ -1179,6 +1232,10 @@ out_ro:
 		mutex_unlock(&ubi->volumes_lock);
 	}
 	ubi_ro_mode(ubi);
+
+	/* Free the PEB descriptor before leaving. */
+	ubi_free_pdesc(pdesc);
+
 	return err;
 }
 
@@ -1189,9 +1246,10 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 	int ret;
 
 	if (shutdown) {
-		struct ubi_wl_entry *e = ewrk->e;
+		struct ubi_wl_entry *e = ubi->lookuptbl[ewrk->pdesc->pnum];
 
 		dbg_wl("cancel erasure of PEB %d EC %d", e->pnum, e->ec);
+		ubi_free_pdesc(ewrk->pdesc);
 		kfree(ewrk);
 		wl_entry_destroy(ubi, e);
 		return 0;
@@ -1214,9 +1272,7 @@ int ubi_is_erase_work(struct ubi_work *wrk)
 /**
  * ubi_wl_put_peb - return a PEB to the wear-leveling sub-system.
  * @ubi: UBI device description object
- * @vol_id: the volume ID that last used this PEB
- * @lnum: the last used logical eraseblock number for the PEB
- * @pnum: physical eraseblock to return
+ * @pdesc: physical eraseblock descriptor
  * @torture: if this physical eraseblock has to be tortured
  *
  * This function is called to return physical eraseblock @pnum to the pool of
@@ -1224,28 +1280,28 @@ int ubi_is_erase_work(struct ubi_work *wrk)
  * occurred to this @pnum and it has to be tested. This function returns zero
  * in case of success, and a negative error code in case of failure.
  */
-int ubi_wl_put_peb(struct ubi_device *ubi, int vol_id, int lnum,
-		   int pnum, int torture)
+int ubi_wl_put_peb(struct ubi_device *ubi, const struct ubi_peb_desc *pdesc,
+		   int torture)
 {
 	int err;
 	struct ubi_wl_entry *e;
 
-	dbg_wl("PEB %d", pnum);
-	ubi_assert(pnum >= 0);
-	ubi_assert(pnum < ubi->peb_count);
+	dbg_wl("PEB %d", pdesc->pnum);
+	ubi_assert(pdesc->pnum >= 0);
+	ubi_assert(pdesc->pnum < ubi->peb_count);
 
 	down_read(&ubi->fm_protect);
 
 retry:
 	mutex_lock(&ubi->wl_lock);
-	e = ubi->lookuptbl[pnum];
+	e = ubi->lookuptbl[pdesc->pnum];
 	if (e == ubi->move_from) {
 		/*
 		 * User is putting the physical eraseblock which was selected to
 		 * be moved. It will be scheduled for erasure in the
 		 * wear-leveling worker.
 		 */
-		dbg_wl("PEB %d is being moved, wait", pnum);
+		dbg_wl("PEB %d is being moved, wait", pdesc->pnum);
 		mutex_unlock(&ubi->wl_lock);
 
 		/* Wait for the WL worker by taking the @ubi->move_mutex */
@@ -1262,7 +1318,7 @@ retry:
 		 * will tell the WL worker that the PEB is not needed anymore
 		 * and should be scheduled for erasure.
 		 */
-		dbg_wl("PEB %d is the target of data moving", pnum);
+		dbg_wl("PEB %d is the target of data moving", pdesc->pnum);
 		ubi_assert(!ubi->move_to_put);
 		ubi->move_to_put = 1;
 		mutex_unlock(&ubi->wl_lock);
@@ -1285,7 +1341,7 @@ retry:
 		} else {
 			err = prot_queue_del(ubi, e->pnum);
 			if (err) {
-				ubi_err(ubi, "PEB %d not found", pnum);
+				ubi_err(ubi, "PEB %d not found", pdesc->pnum);
 				ubi_ro_mode(ubi);
 				mutex_unlock(&ubi->wl_lock);
 				up_read(&ubi->fm_protect);
@@ -1295,7 +1351,7 @@ retry:
 	}
 	mutex_unlock(&ubi->wl_lock);
 
-	err = schedule_erase(ubi, e, vol_id, lnum, torture, false);
+	err = schedule_erase(ubi, pdesc, torture, false);
 	if (err) {
 		mutex_lock(&ubi->wl_lock);
 		wl_tree_add(e, &ubi->used);
@@ -1391,13 +1447,13 @@ static bool ubi_work_match(struct ubi_work *wrk, int vol_id, int lnum)
 
 	ewrk = to_erase_work(wrk);
 
-	if (ewrk->vol_id == vol_id)
+	if (ewrk->pdesc->vol_id == vol_id)
 		return false;
 
 	if (lnum == UBI_ALL)
 		return true;
 
-	return ewrk->lnum == lnum;
+	return ewrk->pdesc->lnum == lnum;
 }
 
 /**
@@ -1586,6 +1642,7 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	struct ubi_ainf_volume *av;
 	struct ubi_ainf_peb *aeb, *tmp;
 	struct ubi_wl_entry *e;
+	struct ubi_peb_desc *pdesc;
 
 	ubi->used = ubi->erroneous = ubi->free = ubi->scrub = RB_ROOT;
 	mutex_init(&ubi->wl_lock);
@@ -1616,7 +1673,16 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		e->pnum = aeb->pnum;
 		e->ec = aeb->ec;
 		ubi->lookuptbl[e->pnum] = e;
-		if (schedule_erase(ubi, e, aeb->vol_id, aeb->lnum, 0, false)) {
+
+		pdesc = ubi_alloc_pdesc(ubi, GFP_KERNEL);
+		if (!pdesc)
+			goto out_free;
+
+		pdesc->pnum = aeb->pnum;
+		pdesc->vol_id = aeb->vol_id;
+		pdesc->lnum = aeb->lnum;
+
+		if (schedule_erase(ubi, pdesc, 0, false)) {
 			wl_entry_destroy(ubi, e);
 			goto out_free;
 		}
@@ -1695,7 +1761,15 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			e->ec = aeb->ec;
 			ubi_assert(!ubi->lookuptbl[e->pnum]);
 			ubi->lookuptbl[e->pnum] = e;
-			if (schedule_erase(ubi, e, aeb->vol_id, aeb->lnum, 0, false)) {
+
+			pdesc = ubi_alloc_pdesc(ubi, GFP_KERNEL);
+			if (!pdesc)
+				goto out_free;
+
+			pdesc->pnum = aeb->pnum;
+			pdesc->vol_id = aeb->vol_id;
+			pdesc->lnum = aeb->lnum;
+			if (schedule_erase(ubi, pdesc, 0, false)) {
 				wl_entry_destroy(ubi, e);
 				goto out_free;
 			}

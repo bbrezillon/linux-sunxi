@@ -276,6 +276,21 @@ struct ubi_fm_pool {
 };
 
 /**
+ * struct ubi_peb_desc - physical eraseblock descriptor
+ * @pnum: the physical eraseblock number
+ * @vol_id: the volume this PEB is attached to or %UBI_ALL if this PEB is
+ *	    not attached to any volume
+ * @lnum: the logical eraseblock contained in this PEB
+ *
+ * This structure is describing a PEB and its content.
+ */
+struct ubi_peb_desc {
+	int pnum;
+	int vol_id;
+	int lnum;
+};
+
+/**
  * struct ubi_eba_leb_desc - EBA logical eraseblock descriptor
  * @lnum: the logical eraseblock number
  * @pnum: the physical eraseblock where the LEB can be found
@@ -809,17 +824,13 @@ struct ubi_work {
 /**
  * struct ubi_erase_work - UBI erase work description data structure.
  * @base: inherit from UBI work
- * @e: physical eraseblock to erase
- * @vol_id: the volume ID on which this erasure is being performed
- * @lnum: the logical eraseblock number
  * @torture: if the physical eraseblock has to be tortured
+ * @pdesc: physical eraseblock descriptor
  */
 struct ubi_erase_work {
 	struct ubi_work base;
-	struct ubi_wl_entry *e;
-	int vol_id;
-	int lnum;
 	int torture;
+	const struct ubi_peb_desc *pdesc;
 };
 
 static inline struct ubi_erase_work *to_erase_work(struct ubi_work *wrk)
@@ -905,6 +916,17 @@ static inline bool ubi_leb_valid(struct ubi_volume *vol, int lnum)
 	return lnum >= 0 && lnum < vol->reserved_pebs;
 }
 
+static inline struct ubi_peb_desc *ubi_alloc_pdesc(struct ubi_device *ubi,
+						   gfp_t gfp_flags)
+{
+	return kzalloc(sizeof(struct ubi_peb_desc), gfp_flags);
+}
+
+static inline void ubi_free_pdesc(const struct ubi_peb_desc *pdesc)
+{
+	kfree(pdesc);
+}
+
 /* eba.c */
 struct ubi_eba_table *ubi_eba_create_table(struct ubi_volume *vol,
 					   int nentries);
@@ -937,8 +959,8 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 
 /* wl.c */
 int ubi_wl_get_peb(struct ubi_device *ubi);
-int ubi_wl_put_peb(struct ubi_device *ubi, int vol_id, int lnum,
-		   int pnum, int torture);
+int ubi_wl_put_peb(struct ubi_device *ubi, const struct ubi_peb_desc *pdesc,
+		   int torture);
 int ubi_wl_flush(struct ubi_device *ubi, int vol_id, int lnum);
 int ubi_wl_scrub_peb(struct ubi_device *ubi, int pnum);
 int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai);
