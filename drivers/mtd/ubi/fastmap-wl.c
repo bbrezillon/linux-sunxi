@@ -285,7 +285,7 @@ static struct ubi_wl_entry *get_peb_for_wl(struct ubi_device *ubi)
  */
 int ubi_ensure_anchor_pebs(struct ubi_device *ubi)
 {
-	struct ubi_work *wrk;
+	struct ubi_wl_work *wrk;
 
 	mutex_lock(&ubi->wl_lock);
 	if (ubi->wl_scheduled) {
@@ -304,8 +304,8 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi)
 	}
 
 	wrk->anchor = 1;
-	wrk->func = &wear_leveling_worker;
-	__schedule_ubi_work(ubi, wrk);
+	wrk->base.func = wear_leveling_worker;
+	__schedule_ubi_work(ubi, &wrk->base);
 	return 0;
 }
 
@@ -347,15 +347,6 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 
 	vol_id = lnum ? UBI_FM_DATA_VOLUME_ID : UBI_FM_SB_VOLUME_ID;
 	return schedule_erase(ubi, e, vol_id, lnum, torture, true);
-}
-
-/**
- * ubi_is_erase_work - checks whether a work is erase work.
- * @wrk: The work object to be checked
- */
-int ubi_is_erase_work(struct ubi_work *wrk)
-{
-	return wrk->func == erase_worker;
 }
 
 static void ubi_fastmap_close(struct ubi_device *ubi)

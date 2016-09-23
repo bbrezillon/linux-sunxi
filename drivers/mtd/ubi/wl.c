@@ -582,31 +582,32 @@ static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
 static int schedule_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 			  int vol_id, int lnum, int torture, bool nested)
 {
-	struct ubi_work *wl_wrk;
+	struct ubi_erase_work *wrk;
 
 	ubi_assert(e);
 
 	dbg_wl("schedule erasure of PEB %d, EC %d, torture %d",
 	       e->pnum, e->ec, torture);
 
-	wl_wrk = kmalloc(sizeof(struct ubi_work), GFP_NOFS);
-	if (!wl_wrk)
+	wrk = kmalloc(sizeof(*wrk), GFP_NOFS);
+	if (!wrk)
 		return -ENOMEM;
 
-	wl_wrk->func = &erase_worker;
-	wl_wrk->e = e;
-	wl_wrk->vol_id = vol_id;
-	wl_wrk->lnum = lnum;
-	wl_wrk->torture = torture;
+	wrk->base.func = erase_worker;
+	wrk->e = e;
+	wrk->vol_id = vol_id;
+	wrk->lnum = lnum;
+	wrk->torture = torture;
 
 	if (nested)
-		__schedule_ubi_work(ubi, wl_wrk);
+		__schedule_ubi_work(ubi, &wrk->base);
 	else
-		schedule_ubi_work(ubi, wl_wrk);
+		schedule_ubi_work(ubi, &wrk->base);
 	return 0;
 }
 
-static int __erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk);
+static int __erase_worker(struct ubi_device *ubi,
+			  struct ubi_erase_work *wrk);
 /**
  * do_sync_erase - run the erase worker synchronously.
  * @ubi: UBI device description object
@@ -619,16 +620,16 @@ static int __erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk);
 static int do_sync_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 			 int vol_id, int lnum, int torture)
 {
-	struct ubi_work wl_wrk;
+	struct ubi_erase_work wrk;
 
 	dbg_wl("sync erase of PEB %i", e->pnum);
 
-	wl_wrk.e = e;
-	wl_wrk.vol_id = vol_id;
-	wl_wrk.lnum = lnum;
-	wl_wrk.torture = torture;
+	wrk.e = e;
+	wrk.vol_id = vol_id;
+	wrk.lnum = lnum;
+	wrk.torture = torture;
 
-	return __erase_worker(ubi, &wl_wrk);
+	return __erase_worker(ubi, &wrk);
 }
 
 static int ensure_wear_leveling(struct ubi_device *ubi, int nested);
@@ -643,9 +644,10 @@ static int ensure_wear_leveling(struct ubi_device *ubi, int nested);
  * one. Returns zero in case of success and a negative error code in case of
  * failure.
  */
-static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
+static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *w,
 				int shutdown)
 {
+	struct ubi_wl_work *wrk = to_wl_work(w);
 	int err, scrubbing = 0, torture = 0, protect = 0, erroneous = 0;
 	int erase = 0, keep = 0, vol_id = -1, lnum = -1;
 #ifdef CONFIG_MTD_UBI_FASTMAP
@@ -997,7 +999,7 @@ static int ensure_wear_leveling(struct ubi_device *ubi, int nested)
 	int err = 0;
 	struct ubi_wl_entry *e1;
 	struct ubi_wl_entry *e2;
-	struct ubi_work *wrk;
+	struct ubi_wl_work *wrk;
 
 	mutex_lock(&ubi->wl_lock);
 	if (ubi->wl_scheduled)
@@ -1031,18 +1033,18 @@ static int ensure_wear_leveling(struct ubi_device *ubi, int nested)
 	ubi->wl_scheduled = 1;
 	mutex_unlock(&ubi->wl_lock);
 
-	wrk = kmalloc(sizeof(struct ubi_work), GFP_NOFS);
+	wrk = kmalloc(sizeof(*wrk), GFP_NOFS);
 	if (!wrk) {
 		err = -ENOMEM;
 		goto out_cancel;
 	}
 
 	wrk->anchor = 0;
-	wrk->func = &wear_leveling_worker;
+	wrk->base.func = wear_leveling_worker;
 	if (nested)
-		__schedule_ubi_work(ubi, wrk);
+		__schedule_ubi_work(ubi, &wrk->base);
 	else
-		schedule_ubi_work(ubi, wrk);
+		schedule_ubi_work(ubi, &wrk->base);
 	return err;
 
 out_cancel:
@@ -1065,18 +1067,19 @@ out_unlock:
  * needed. Returns zero in case of success and a negative error code in case of
  * failure.
  */
-static int __erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk)
+static int __erase_worker(struct ubi_device *ubi,
+			  struct ubi_erase_work *wrk)
 {
-	struct ubi_wl_entry *e = wl_wrk->e;
+	struct ubi_wl_entry *e = wrk->e;
 	int pnum = e->pnum;
-	int vol_id = wl_wrk->vol_id;
-	int lnum = wl_wrk->lnum;
+	int vol_id = wrk->vol_id;
+	int lnum = wrk->lnum;
 	int err, available_consumed = 0;
 
 	dbg_wl("erase PEB %d EC %d LEB %d:%d",
-	       pnum, e->ec, wl_wrk->vol_id, wl_wrk->lnum);
+	       pnum, e->ec, wrk->vol_id, wrk->lnum);
 
-	err = sync_erase(ubi, e, wl_wrk->torture);
+	err = sync_erase(ubi, e, wrk->torture);
 	if (!err) {
 		mutex_lock(&ubi->wl_lock);
 		wl_tree_add(e, &ubi->free);
@@ -1179,23 +1182,33 @@ out_ro:
 	return err;
 }
 
-static int erase_worker(struct ubi_device *ubi, struct ubi_work *wl_wrk,
+static int erase_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 			  int shutdown)
 {
+	struct ubi_erase_work *ewrk = to_erase_work(wrk);
 	int ret;
 
 	if (shutdown) {
-		struct ubi_wl_entry *e = wl_wrk->e;
+		struct ubi_wl_entry *e = ewrk->e;
 
 		dbg_wl("cancel erasure of PEB %d EC %d", e->pnum, e->ec);
-		kfree(wl_wrk);
+		kfree(ewrk);
 		wl_entry_destroy(ubi, e);
 		return 0;
 	}
 
-	ret = __erase_worker(ubi, wl_wrk);
-	kfree(wl_wrk);
+	ret = __erase_worker(ubi, ewrk);
+	kfree(ewrk);
 	return ret;
+}
+
+/**
+ * ubi_is_erase_work - checks whether a work is erase work.
+ * @wrk: The work object to be checked
+ */
+int ubi_is_erase_work(struct ubi_work *wrk)
+{
+	return wrk->func == erase_worker;
 }
 
 /**
@@ -1357,6 +1370,37 @@ retry:
 }
 
 /**
+ * ubi_work_match - Check if a UBI work match the vol_id and lnum parameters
+ * @wrk: UBI work object
+ * @vol_id: the volume id to match
+ * @lnum: the logical eraseblock number to match
+ *
+ * If vol_id or lnum value is set to %UBI_ALL, then it acts as a wildcard for
+ * all of the corresponding volume numbers or logical eraseblock numbers.
+ */
+static bool ubi_work_match(struct ubi_work *wrk, int vol_id, int lnum)
+{
+	struct ubi_erase_work *ewrk;
+
+	if (vol_id == UBI_ALL)
+		return true;
+
+	/* Only UBI erase work can match on a specific vol_id. */
+	if (!ubi_is_erase_work(wrk))
+		return false;
+
+	ewrk = to_erase_work(wrk);
+
+	if (ewrk->vol_id == vol_id)
+		return false;
+
+	if (lnum == UBI_ALL)
+		return true;
+
+	return ewrk->lnum == lnum;
+}
+
+/**
  * ubi_wl_flush - flush all pending works.
  * @ubi: UBI device description object
  * @vol_id: the volume id to flush for
@@ -1387,8 +1431,7 @@ int ubi_wl_flush(struct ubi_device *ubi, int vol_id, int lnum)
 		down_read(&ubi->work_sem);
 		mutex_lock(&ubi->wl_lock);
 		list_for_each_entry_safe(wrk, tmp, &ubi->works, list) {
-			if ((vol_id == UBI_ALL || wrk->vol_id == vol_id) &&
-			    (lnum == UBI_ALL || wrk->lnum == lnum)) {
+			if (ubi_work_match(wrk, vol_id, lnum)) {
 				list_del(&wrk->list);
 				ubi->works_count -= 1;
 				ubi_assert(ubi->works_count >= 0);

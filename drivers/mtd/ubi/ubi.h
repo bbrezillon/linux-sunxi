@@ -803,13 +803,44 @@ struct ubi_attach_info {
 struct ubi_work {
 	struct list_head list;
 	int (*func)(struct ubi_device *ubi, struct ubi_work *wrk, int shutdown);
-	/* The below fields are only relevant to erasure works */
+};
+
+
+/**
+ * struct ubi_erase_work - UBI erase work description data structure.
+ * @base: inherit from UBI work
+ * @e: physical eraseblock to erase
+ * @vol_id: the volume ID on which this erasure is being performed
+ * @lnum: the logical eraseblock number
+ * @torture: if the physical eraseblock has to be tortured
+ */
+struct ubi_erase_work {
+	struct ubi_work base;
 	struct ubi_wl_entry *e;
 	int vol_id;
 	int lnum;
 	int torture;
+};
+
+static inline struct ubi_erase_work *to_erase_work(struct ubi_work *wrk)
+{
+	return container_of(wrk, struct ubi_erase_work, base);
+}
+
+/**
+ * struct ubi_wl_work - UBI wear-leveling work description data structure.
+ * @base: inherit from UBI work
+ * @anchor: produce a anchor PEB to be used by fastmap
+ */
+struct ubi_wl_work {
+	struct ubi_work base;
 	int anchor;
 };
+
+static inline struct ubi_wl_work *to_wl_work(struct ubi_work *wrk)
+{
+	return container_of(wrk, struct ubi_wl_work, base);
+}
 
 #include "debug.h"
 
