@@ -443,6 +443,77 @@ bool ubi_eba_is_mapped(struct ubi_volume *vol, int lnum)
 }
 
 /**
+ * ubi_eba_invalidate_entry - invalidate an entry in the EBA table.
+ * @vol: volume description object
+ * @lnum: logical eraseblock number
+ *
+ * This function invalidate the LEB to PEB mapping of LEB @lnum.
+ * Must be called with ->fm_eba_sem held in read mode.
+ *
+ * Return the PEB descriptor pointing to the PEB containing LEB @lnum, NULL if
+ * the LEB is already unmapped, and an error pointer otherwise.
+ * If a valid PEB desc is returned, it should be freed using ubi_wl_put_peb().
+ */
+static struct ubi_peb_desc *ubi_eba_invalidate_entry(struct ubi_volume *vol,
+						     int lnum)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_peb_desc *pdesc;
+	int pnum = vol->eba_tbl->entries[lnum].pnum;
+
+	/* This logical eraseblock is already unmapped */
+	if (pnum < 0)
+		return NULL;
+
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc)
+		return ERR_PTR(-ENOMEM);
+
+	pdesc->pnum = pnum;
+	pdesc->vol_id = vol->vol_id;
+	pdesc->lnum = lnum;
+
+	vol->eba_tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
+
+	return pdesc;
+}
+
+/**
+ * ubi_eba_update_leb - invalidate an entry in the EBA table.
+ * @vol: volume description object
+ * @ldesc: logical eraseblock descriptor
+ *
+ * This function updates the LEB to PEB mapping of LEB @lnum.
+ * Must be called with ->fm_eba_sem held in read mode.
+ *
+ * Return the PEB descriptor pointing to the old PEB containing LEB @lnum,
+ * NULL if the LEB was previously unmapped, and an error pointer otherwise.
+ * If a valid PEB desc is returned, it should be freed using ubi_wl_put_peb().
+ */
+static struct ubi_peb_desc *ubi_eba_update_entry(struct ubi_volume *vol,
+					const struct ubi_eba_leb_desc *ldesc)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_peb_desc *pdesc = NULL;
+	int pnum = vol->eba_tbl->entries[ldesc->lnum].pnum;
+
+	if (pnum >= 0) {
+		/* Retrieve the existing mapping. */
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc)
+			return ERR_PTR(-ENOMEM);
+
+		pdesc->pnum = pnum;
+		pdesc->vol_id = vol->vol_id;
+		pdesc->lnum = ldesc->lnum;
+	}
+
+	vol->eba_tbl->entries[ldesc->lnum].pnum = ldesc->pnum;
+
+	return pdesc;
+}
+
+/**
  * ubi_eba_unmap_leb - un-map logical eraseblock.
  * @ubi: UBI device description object
  * @vol: volume description object
@@ -465,26 +536,20 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	if (err)
 		return err;
 
-	pnum = vol->eba_tbl->entries[lnum].pnum;
-	if (pnum < 0)
-		/* This logical eraseblock is already unmapped */
-		goto out_unlock;
+	down_read(&ubi->eba_sem);
+	pdesc = ubi_eba_invalidate_entry(vol, lnum);
+	up_read(&ubi->eba_sem);
 
-	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
-	if (!pdesc) {
-		err = -ENOMEM;
+	if (IS_ERR(pdesc)) {
+		err = PTR_ERR(pdesc);
+		goto out_unlock;
+	} else if (!pdesc) {
+		/* This logical eraseblock is already unmapped */
 		goto out_unlock;
 	}
 
-	pdesc->vol_id = vol->vol_id;
-	pdesc->lnum = lnum;
-	pdesc->pnum = pnum;
-
 	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, pnum);
 
-	down_read(&ubi->eba_sem);
-	vol->eba_tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
-	up_read(&ubi->eba_sem);
 	err = ubi_wl_put_peb(ubi, pdesc, 0);
 
 out_unlock:
@@ -723,17 +788,10 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 	struct ubi_device *ubi = vol->ubi;
 	struct ubi_vid_hdr *vid_hdr = ubi_get_vid_hdr(vidb);
 	int new_pnum, err, data_size;
-	struct ubi_peb_desc *pdesc;
+	struct ubi_peb_desc *pdesc = NULL;
 	uint32_t crc;
 
 	*retry = false;
-
-	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
-	if (!pdesc)
-		return -ENOMEM;
-
-	pdesc->lnum = lnum;
-	pdesc->vol_id = vol->vol_id;
 
 	new_pnum = ubi_wl_get_peb(ubi);
 	if (new_pnum < 0) {
@@ -783,27 +841,38 @@ static int try_recover_peb(struct ubi_volume *vol, int pnum, int lnum,
 out_unlock:
 	mutex_unlock(&ubi->buf_mutex);
 
-	if (!err)
-		vol->eba_tbl->entries[lnum].pnum = new_pnum;
+	if (!err) {
+		struct ubi_eba_leb_desc ldesc;
+
+		ldesc.lnum = lnum;
+		ldesc.pnum = new_pnum;
+
+		pdesc = ubi_eba_update_entry(vol, &ldesc);
+	}
 
 out_put:
 	up_read(&ubi->eba_sem);
 
 	if (!err) {
-		pdesc->pnum = pnum;
-		ubi_wl_put_peb(ubi, pdesc, 1);
 		ubi_msg(ubi, "data was successfully recovered");
 	} else if (new_pnum >= 0) {
 		/*
 		 * Bad luck? This physical eraseblock is bad too? Crud. Let's
 		 * try to get another one.
 		 */
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc)
+			return -ENOMEM;
+
 		pdesc->pnum = new_pnum;
-		ubi_wl_put_peb(ubi, pdesc, 1);
+		pdesc->lnum = lnum;
+		pdesc->vol_id = vol->vol_id;
+
 		ubi_warn(ubi, "failed to write to PEB %d", new_pnum);
-	} else {
-		ubi_free_pdesc(pdesc);
 	}
+
+	if (pdesc)
+		ubi_wl_put_peb(ubi, pdesc, 1);
 
 	return err;
 }
@@ -871,23 +940,14 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 				  int offset, int len)
 {
 	struct ubi_device *ubi = vol->ubi;
-	int pnum, opnum, err, vol_id = vol->vol_id;
+	int pnum, err, vol_id = vol->vol_id;
 	struct ubi_peb_desc *pdesc;
-
-	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
-	if (!pdesc)
-		return -ENOMEM;
-
-	pdesc->lnum = lnum;
-	pdesc->vol_id = vol->vol_id;
 
 	pnum = ubi_wl_get_peb(ubi);
 	if (pnum < 0) {
 		err = pnum;
 		goto out_put;
 	}
-
-	opnum = vol->eba_tbl->entries[lnum].pnum;
 
 	dbg_eba("write VID hdr and %d bytes at offset %d of LEB %d:%d, PEB %d",
 		len, offset, vol_id, lnum, pnum);
@@ -909,20 +969,30 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 		}
 	}
 
-	vol->eba_tbl->entries[lnum].pnum = pnum;
+	if (!err) {
+		struct ubi_eba_leb_desc ldesc;
+
+		ldesc.lnum = lnum;
+		ldesc.pnum = pnum;
+
+		pdesc = ubi_eba_update_entry(vol, &ldesc);
+	}
 
 out_put:
 	up_read(&ubi->eba_sem);
 
 	if (err && pnum >= 0) {
+		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+		if (!pdesc)
+			return -ENOMEM;
+
 		pdesc->pnum = pnum;
-		err = ubi_wl_put_peb(ubi, pdesc, 1);
-	} else if (!err && opnum >= 0) {
-		pdesc->pnum = opnum;
-		err = ubi_wl_put_peb(ubi, pdesc, 0);
-	} else {
-		ubi_free_pdesc(pdesc);
+		pdesc->lnum = lnum;
+		pdesc->vol_id = vol_id;
 	}
+
+	if (pdesc)
+		ubi_wl_put_peb(ubi, pdesc, err ? 1 : 0);
 
 	return err;
 }
