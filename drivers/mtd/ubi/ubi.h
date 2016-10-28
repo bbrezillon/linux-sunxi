@@ -564,7 +564,7 @@ struct ubi_device {
 	char ubi_name[sizeof(UBI_NAME_STR)+5];
 	int vol_count;
 	struct ubi_volume *volumes[UBI_MAX_VOLUMES+UBI_INT_VOL_COUNT];
-	spinlock_t volumes_lock;
+	struct mutex volumes_lock;
 	int ref_count;
 	int image_seq;
 
@@ -586,7 +586,7 @@ struct ubi_device {
 
 	/* EBA sub-system's stuff */
 	unsigned long long global_sqnum;
-	spinlock_t ltree_lock;
+	struct mutex ltree_lock;
 	struct rb_root ltree;
 	struct mutex alc_mutex;
 
@@ -611,7 +611,7 @@ struct ubi_device {
 	struct rb_root scrub;
 	struct list_head pq[UBI_PROT_QUEUE_LEN];
 	int pq_head;
-	spinlock_t wl_lock;
+	struct mutex wl_lock;
 	struct mutex move_mutex;
 	struct rw_semaphore work_sem;
 	int wl_scheduled;

@@ -85,9 +85,9 @@ unsigned long long ubi_next_sqnum(struct ubi_device *ubi)
 {
 	unsigned long long sqnum;
 
-	spin_lock(&ubi->ltree_lock);
+	mutex_lock(&ubi->ltree_lock);
 	sqnum = ubi->global_sqnum++;
-	spin_unlock(&ubi->ltree_lock);
+	mutex_unlock(&ubi->ltree_lock);
 
 	return sqnum;
 }
@@ -274,7 +274,7 @@ static struct ubi_ltree_entry *ltree_add_entry(struct ubi_device *ubi,
 	le->vol_id = vol_id;
 	le->lnum = lnum;
 
-	spin_lock(&ubi->ltree_lock);
+	mutex_lock(&ubi->ltree_lock);
 	le1 = ltree_lookup(ubi, vol_id, lnum);
 
 	if (le1) {
@@ -315,7 +315,7 @@ static struct ubi_ltree_entry *ltree_add_entry(struct ubi_device *ubi,
 		rb_insert_color(&le->rb, &ubi->ltree);
 	}
 	le->users += 1;
-	spin_unlock(&ubi->ltree_lock);
+	mutex_unlock(&ubi->ltree_lock);
 
 	kfree(le_free);
 	return le;
@@ -351,7 +351,7 @@ static void leb_read_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 {
 	struct ubi_ltree_entry *le;
 
-	spin_lock(&ubi->ltree_lock);
+	mutex_lock(&ubi->ltree_lock);
 	le = ltree_lookup(ubi, vol_id, lnum);
 	le->users -= 1;
 	ubi_assert(le->users >= 0);
@@ -360,7 +360,7 @@ static void leb_read_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 		rb_erase(&le->rb, &ubi->ltree);
 		kfree(le);
 	}
-	spin_unlock(&ubi->ltree_lock);
+	mutex_unlock(&ubi->ltree_lock);
 }
 
 /**
@@ -405,14 +405,14 @@ static int leb_write_trylock(struct ubi_device *ubi, int vol_id, int lnum)
 		return 0;
 
 	/* Contention, cancel */
-	spin_lock(&ubi->ltree_lock);
+	mutex_lock(&ubi->ltree_lock);
 	le->users -= 1;
 	ubi_assert(le->users >= 0);
 	if (le->users == 0) {
 		rb_erase(&le->rb, &ubi->ltree);
 		kfree(le);
 	}
-	spin_unlock(&ubi->ltree_lock);
+	mutex_unlock(&ubi->ltree_lock);
 
 	return 1;
 }
@@ -427,7 +427,7 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 {
 	struct ubi_ltree_entry *le;
 
-	spin_lock(&ubi->ltree_lock);
+	mutex_lock(&ubi->ltree_lock);
 	le = ltree_lookup(ubi, vol_id, lnum);
 	le->users -= 1;
 	ubi_assert(le->users >= 0);
@@ -436,7 +436,7 @@ static void leb_write_unlock(struct ubi_device *ubi, int vol_id, int lnum)
 		rb_erase(&le->rb, &ubi->ltree);
 		kfree(le);
 	}
-	spin_unlock(&ubi->ltree_lock);
+	mutex_unlock(&ubi->ltree_lock);
 }
 
 /**
@@ -1226,7 +1226,7 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 			    ubi->leb_size - be32_to_cpu(vid_hdr->data_pad);
 
 	idx = vol_id2idx(ubi, vol_id);
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	/*
 	 * Note, we may race with volume deletion, which means that the volume
 	 * this logical eraseblock belongs to might be being deleted. Since the
@@ -1234,7 +1234,7 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	 * be locked in 'ubi_wl_put_peb()' and wait for the WL worker to finish.
 	 */
 	vol = ubi->volumes[idx];
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	if (!vol) {
 		/* No need to do further work, cancel */
 		dbg_wl("volume %d is being removed, cancel", vol_id);
@@ -1519,7 +1519,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 
 	dbg_eba("initialize EBA sub-system");
 
-	spin_lock_init(&ubi->ltree_lock);
+	mutex_init(&ubi->ltree_lock);
 	mutex_init(&ubi->alc_mutex);
 	ubi->ltree = RB_ROOT;
 

@@ -1128,8 +1128,8 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 		goto out_kfree;
 	}
 
-	spin_lock(&ubi->volumes_lock);
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->wl_lock);
 
 	fmsb = (struct ubi_fm_sb *)fm_raw;
 	fm_pos += sizeof(*fmsb);
@@ -1286,8 +1286,8 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 	avhdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
 	avhdr->lnum = 0;
 
-	spin_unlock(&ubi->wl_lock);
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	dbg_bld("writing fastmap SB to PEB %i", new_fm->e[0]->pnum);
 	ret = ubi_io_write_vid_hdr(ubi, new_fm->e[0]->pnum, avbuf);
@@ -1532,9 +1532,9 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 	}
 
 	for (i = 1; i < new_fm->used_blocks; i++) {
-		spin_lock(&ubi->wl_lock);
+		mutex_lock(&ubi->wl_lock);
 		tmp_e = ubi_wl_get_fm_peb(ubi, 0);
-		spin_unlock(&ubi->wl_lock);
+		mutex_unlock(&ubi->wl_lock);
 
 		if (!tmp_e) {
 			if (old_fm && old_fm->e[i]) {
@@ -1582,9 +1582,9 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 		}
 	}
 
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 	tmp_e = ubi_wl_get_fm_peb(ubi, 1);
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 
 	if (old_fm) {
 		/* no fresh anchor PEB was found, reuse the old one */

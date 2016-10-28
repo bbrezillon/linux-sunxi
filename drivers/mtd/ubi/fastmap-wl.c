@@ -23,9 +23,9 @@ static void update_fastmap_work_fn(struct work_struct *wrk)
 	struct ubi_device *ubi = container_of(wrk, struct ubi_device, fm_work);
 
 	ubi_update_fastmap(ubi);
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 	ubi->fm_work_scheduled = 0;
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 }
 
 /**
@@ -123,7 +123,7 @@ void ubi_refill_pools(struct ubi_device *ubi)
 	struct ubi_wl_entry *e;
 	int enough;
 
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 
 	return_unused_pool_pebs(ubi, wl_pool);
 	return_unused_pool_pebs(ubi, pool);
@@ -168,7 +168,7 @@ void ubi_refill_pools(struct ubi_device *ubi)
 	wl_pool->used = 0;
 	pool->used = 0;
 
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 }
 
 /**
@@ -211,12 +211,12 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 
 again:
 	down_read(&ubi->fm_eba_sem);
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 
 	/* We check here also for the WL pool because at this point we can
 	 * refill the WL pool synchronous. */
 	if (pool->used == pool->size || wl_pool->used == wl_pool->size) {
-		spin_unlock(&ubi->wl_lock);
+		mutex_unlock(&ubi->wl_lock);
 		up_read(&ubi->fm_eba_sem);
 		ret = ubi_update_fastmap(ubi);
 		if (ret) {
@@ -225,11 +225,11 @@ again:
 			return -ENOSPC;
 		}
 		down_read(&ubi->fm_eba_sem);
-		spin_lock(&ubi->wl_lock);
+		mutex_lock(&ubi->wl_lock);
 	}
 
 	if (pool->used == pool->size) {
-		spin_unlock(&ubi->wl_lock);
+		mutex_unlock(&ubi->wl_lock);
 		if (retried) {
 			ubi_err(ubi, "Unable to get a free PEB from user WL pool");
 			ret = -ENOSPC;
@@ -248,7 +248,7 @@ again:
 	ubi_assert(pool->used < pool->size);
 	ret = pool->pebs[pool->used++];
 	prot_queue_add(ubi, ubi->lookuptbl[ret]);
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 out:
 	return ret;
 }
@@ -287,19 +287,19 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi)
 {
 	struct ubi_work *wrk;
 
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 	if (ubi->wl_scheduled) {
-		spin_unlock(&ubi->wl_lock);
+		mutex_unlock(&ubi->wl_lock);
 		return 0;
 	}
 	ubi->wl_scheduled = 1;
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 
 	wrk = kmalloc(sizeof(struct ubi_work), GFP_NOFS);
 	if (!wrk) {
-		spin_lock(&ubi->wl_lock);
+		mutex_lock(&ubi->wl_lock);
 		ubi->wl_scheduled = 0;
-		spin_unlock(&ubi->wl_lock);
+		mutex_unlock(&ubi->wl_lock);
 		return -ENOMEM;
 	}
 
@@ -330,7 +330,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 	ubi_assert(pnum >= 0);
 	ubi_assert(pnum < ubi->peb_count);
 
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 	e = ubi->lookuptbl[pnum];
 
 	/* This can happen if we recovered from a fastmap the very
@@ -343,7 +343,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 		ubi->lookuptbl[pnum] = e;
 	}
 
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 
 	vol_id = lnum ? UBI_FM_DATA_VOLUME_ID : UBI_FM_SB_VOLUME_ID;
 	return schedule_erase(ubi, e, vol_id, lnum, torture, true);

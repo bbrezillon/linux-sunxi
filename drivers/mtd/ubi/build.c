@@ -101,7 +101,7 @@ static struct ubi_device *ubi_devices[UBI_MAX_DEVICES];
 DEFINE_MUTEX(ubi_devices_mutex);
 
 /* Protects @ubi_devices and @ubi->ref_count */
-static DEFINE_SPINLOCK(ubi_devices_lock);
+static DEFINE_MUTEX(ubi_devices_lock);
 
 /* "Show" method for files in '/<sysfs>/class/ubi/' */
 static ssize_t ubi_version_show(struct class *class,
@@ -265,14 +265,14 @@ struct ubi_device *ubi_get_device(int ubi_num)
 {
 	struct ubi_device *ubi;
 
-	spin_lock(&ubi_devices_lock);
+	mutex_lock(&ubi_devices_lock);
 	ubi = ubi_devices[ubi_num];
 	if (ubi) {
 		ubi_assert(ubi->ref_count >= 0);
 		ubi->ref_count += 1;
 		get_device(&ubi->dev);
 	}
-	spin_unlock(&ubi_devices_lock);
+	mutex_unlock(&ubi_devices_lock);
 
 	return ubi;
 }
@@ -283,10 +283,10 @@ struct ubi_device *ubi_get_device(int ubi_num)
  */
 void ubi_put_device(struct ubi_device *ubi)
 {
-	spin_lock(&ubi_devices_lock);
+	mutex_lock(&ubi_devices_lock);
 	ubi->ref_count -= 1;
 	put_device(&ubi->dev);
-	spin_unlock(&ubi_devices_lock);
+	mutex_unlock(&ubi_devices_lock);
 }
 
 /**
@@ -301,18 +301,18 @@ struct ubi_device *ubi_get_by_major(int major)
 	int i;
 	struct ubi_device *ubi;
 
-	spin_lock(&ubi_devices_lock);
+	mutex_lock(&ubi_devices_lock);
 	for (i = 0; i < UBI_MAX_DEVICES; i++) {
 		ubi = ubi_devices[i];
 		if (ubi && MAJOR(ubi->cdev.dev) == major) {
 			ubi_assert(ubi->ref_count >= 0);
 			ubi->ref_count += 1;
 			get_device(&ubi->dev);
-			spin_unlock(&ubi_devices_lock);
+			mutex_unlock(&ubi_devices_lock);
 			return ubi;
 		}
 	}
-	spin_unlock(&ubi_devices_lock);
+	mutex_unlock(&ubi_devices_lock);
 
 	return NULL;
 }
@@ -329,7 +329,7 @@ int ubi_major2num(int major)
 {
 	int i, ubi_num = -ENODEV;
 
-	spin_lock(&ubi_devices_lock);
+	mutex_lock(&ubi_devices_lock);
 	for (i = 0; i < UBI_MAX_DEVICES; i++) {
 		struct ubi_device *ubi = ubi_devices[i];
 
@@ -338,7 +338,7 @@ int ubi_major2num(int major)
 			break;
 		}
 	}
-	spin_unlock(&ubi_devices_lock);
+	mutex_unlock(&ubi_devices_lock);
 
 	return ubi_num;
 }
@@ -958,7 +958,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	mutex_init(&ubi->buf_mutex);
 	mutex_init(&ubi->ckvol_mutex);
 	mutex_init(&ubi->device_mutex);
-	spin_lock_init(&ubi->volumes_lock);
+	mutex_init(&ubi->volumes_lock);
 	init_rwsem(&ubi->fm_protect);
 	init_rwsem(&ubi->fm_eba_sem);
 
@@ -1034,10 +1034,10 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	 * The below lock makes sure we do not race with 'ubi_thread()' which
 	 * checks @ubi->thread_enabled. Otherwise we may fail to wake it up.
 	 */
-	spin_lock(&ubi->wl_lock);
+	mutex_lock(&ubi->wl_lock);
 	ubi->thread_enabled = 1;
 	wake_up_process(ubi->bgt_thread);
-	spin_unlock(&ubi->wl_lock);
+	mutex_unlock(&ubi->wl_lock);
 
 	ubi_notify_all(ubi, UBI_VOLUME_ADDED, NULL);
 	return ubi_num;
@@ -1087,12 +1087,12 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 	if (!ubi)
 		return -EINVAL;
 
-	spin_lock(&ubi_devices_lock);
+	mutex_lock(&ubi_devices_lock);
 	put_device(&ubi->dev);
 	ubi->ref_count -= 1;
 	if (ubi->ref_count) {
 		if (!anyway) {
-			spin_unlock(&ubi_devices_lock);
+			mutex_unlock(&ubi_devices_lock);
 			return -EBUSY;
 		}
 		/* This may only happen if there is a bug */
@@ -1100,7 +1100,7 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 			ubi->ubi_name, ubi->ref_count);
 	}
 	ubi_devices[ubi_num] = NULL;
-	spin_unlock(&ubi_devices_lock);
+	mutex_unlock(&ubi_devices_lock);
 
 	ubi_assert(ubi_num == ubi->ubi_num);
 	ubi_notify_all(ubi, UBI_VOLUME_REMOVED, NULL);

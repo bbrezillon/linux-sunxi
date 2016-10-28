@@ -59,7 +59,7 @@ static int get_exclusive(struct ubi_volume_desc *desc)
 	int users, err;
 	struct ubi_volume *vol = desc->vol;
 
-	spin_lock(&vol->ubi->volumes_lock);
+	mutex_lock(&vol->ubi->volumes_lock);
 	users = vol->readers + vol->writers + vol->exclusive + vol->metaonly;
 	ubi_assert(users > 0);
 	if (users > 1) {
@@ -71,7 +71,7 @@ static int get_exclusive(struct ubi_volume_desc *desc)
 		err = desc->mode;
 		desc->mode = UBI_EXCLUSIVE;
 	}
-	spin_unlock(&vol->ubi->volumes_lock);
+	mutex_unlock(&vol->ubi->volumes_lock);
 
 	return err;
 }
@@ -85,7 +85,7 @@ static void revoke_exclusive(struct ubi_volume_desc *desc, int mode)
 {
 	struct ubi_volume *vol = desc->vol;
 
-	spin_lock(&vol->ubi->volumes_lock);
+	mutex_lock(&vol->ubi->volumes_lock);
 	ubi_assert(vol->readers == 0 && vol->writers == 0 && vol->metaonly == 0);
 	ubi_assert(vol->exclusive == 1 && desc->mode == UBI_EXCLUSIVE);
 	vol->exclusive = 0;
@@ -97,7 +97,7 @@ static void revoke_exclusive(struct ubi_volume_desc *desc, int mode)
 		vol->metaonly = 1;
 	else
 		vol->exclusive = 1;
-	spin_unlock(&vol->ubi->volumes_lock);
+	mutex_unlock(&vol->ubi->volumes_lock);
 
 	desc->mode = mode;
 }

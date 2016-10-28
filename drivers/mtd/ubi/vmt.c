@@ -75,15 +75,15 @@ static ssize_t vol_attribute_show(struct device *dev,
 	if (!ubi)
 		return -ENODEV;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	if (!ubi->volumes[vol->vol_id]) {
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 		ubi_put_device(ubi);
 		return -ENODEV;
 	}
 	/* Take a reference to prevent volume removal */
 	vol->ref_count += 1;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	if (attr == &attr_vol_reserved_ebs)
 		ret = sprintf(buf, "%d\n", vol->reserved_pebs);
@@ -112,10 +112,10 @@ static ssize_t vol_attribute_show(struct device *dev,
 		ret = -EINVAL;
 
 	/* We've done the operation, drop volume and UBI device references */
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	vol->ref_count -= 1;
 	ubi_assert(vol->ref_count >= 0);
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	ubi_put_device(ubi);
 	return ret;
 }
@@ -168,7 +168,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	if (!vol)
 		return -ENOMEM;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	if (vol_id == UBI_VOL_NUM_AUTO) {
 		/* Find unused volume ID */
 		dbg_gen("search for vacant volume ID");
@@ -224,7 +224,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	}
 	ubi->avail_pebs -= vol->reserved_pebs;
 	ubi->rsvd_pebs += vol->reserved_pebs;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	vol->vol_id    = vol_id;
 	vol->alignment = req->alignment;
@@ -304,10 +304,10 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	if (err)
 		goto out_sysfs;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	ubi->volumes[vol_id] = vol;
 	ubi->vol_count += 1;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	ubi_volume_notify(ubi, vol, UBI_VOLUME_ADDED);
 	self_check_volumes(ubi);
@@ -331,11 +331,11 @@ out_mapping:
 	if (do_free)
 		ubi_eba_destroy_table(eba_tbl);
 out_acc:
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= vol->reserved_pebs;
 	ubi->avail_pebs += vol->reserved_pebs;
 out_unlock:
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	if (do_free)
 		kfree(vol);
 	else
@@ -367,7 +367,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 	if (ubi->ro_mode)
 		return -EROFS;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	if (vol->ref_count > 1) {
 		/*
 		 * The volume is busy, probably someone is reading one of its
@@ -377,7 +377,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 		goto out_unlock;
 	}
 	ubi->volumes[vol_id] = NULL;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	if (!no_vtbl) {
 		err = ubi_change_vtbl_record(ubi, vol_id, NULL);
@@ -394,12 +394,12 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 	cdev_del(&vol->cdev);
 	device_unregister(&vol->dev);
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= reserved_pebs;
 	ubi->avail_pebs += reserved_pebs;
 	ubi_update_reserved(ubi);
 	ubi->vol_count -= 1;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	ubi_volume_notify(ubi, vol, UBI_VOLUME_REMOVED);
 	if (!no_vtbl)
@@ -409,10 +409,10 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 
 out_err:
 	ubi_err(ubi, "cannot remove volume %d, error %d", vol_id, err);
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	ubi->volumes[vol_id] = vol;
 out_unlock:
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	return err;
 }
 
@@ -455,25 +455,25 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	if (IS_ERR(new_eba_tbl))
 		return PTR_ERR(new_eba_tbl);
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	if (vol->ref_count > 1) {
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 		err = -EBUSY;
 		goto out_free;
 	}
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	/* Reserve physical eraseblocks */
 	pebs = reserved_pebs - vol->reserved_pebs;
 	if (pebs > 0) {
-		spin_lock(&ubi->volumes_lock);
+		mutex_lock(&ubi->volumes_lock);
 		if (pebs > ubi->avail_pebs) {
 			ubi_err(ubi, "not enough PEBs: requested %d, available %d",
 				pebs, ubi->avail_pebs);
 			if (ubi->corr_peb_count)
 				ubi_err(ubi, "%d PEBs are corrupted and not used",
 					ubi->corr_peb_count);
-			spin_unlock(&ubi->volumes_lock);
+			mutex_unlock(&ubi->volumes_lock);
 			err = -ENOSPC;
 			goto out_free;
 		}
@@ -481,7 +481,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		ubi->rsvd_pebs += pebs;
 		ubi_eba_copy_table(vol, new_eba_tbl, vol->reserved_pebs);
 		ubi_eba_replace_table(vol, new_eba_tbl);
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 	}
 
 	if (pebs < 0) {
@@ -490,13 +490,13 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 			if (err)
 				goto out_acc;
 		}
-		spin_lock(&ubi->volumes_lock);
+		mutex_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs += pebs;
 		ubi->avail_pebs -= pebs;
 		ubi_update_reserved(ubi);
 		ubi_eba_copy_table(vol, new_eba_tbl, reserved_pebs);
 		ubi_eba_replace_table(vol, new_eba_tbl);
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 	}
 
 	/*
@@ -531,10 +531,10 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 
 out_acc:
 	if (pebs > 0) {
-		spin_lock(&ubi->volumes_lock);
+		mutex_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs -= pebs;
 		ubi->avail_pebs += pebs;
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 	}
 out_free:
 	kfree(new_eba_tbl);
@@ -567,10 +567,10 @@ int ubi_rename_volumes(struct ubi_device *ubi, struct list_head *rename_list)
 		} else {
 			struct ubi_volume *vol = re->desc->vol;
 
-			spin_lock(&ubi->volumes_lock);
+			mutex_lock(&ubi->volumes_lock);
 			vol->name_len = re->new_name_len;
 			memcpy(vol->name, re->new_name, re->new_name_len + 1);
-			spin_unlock(&ubi->volumes_lock);
+			mutex_unlock(&ubi->volumes_lock);
 			ubi_volume_notify(ubi, vol, UBI_VOLUME_RENAMED);
 		}
 	}
@@ -657,7 +657,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 	long long n;
 	const char *name;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	reserved_pebs = be32_to_cpu(ubi->vtbl[vol_id].reserved_pebs);
 	vol = ubi->volumes[idx];
 
@@ -666,7 +666,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 			ubi_err(ubi, "no volume info, but volume exists");
 			goto fail;
 		}
-		spin_unlock(&ubi->volumes_lock);
+		mutex_unlock(&ubi->volumes_lock);
 		return 0;
 	}
 
@@ -778,7 +778,7 @@ static int self_check_volume(struct ubi_device *ubi, int vol_id)
 		goto fail;
 	}
 
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	return 0;
 
 fail:
@@ -787,7 +787,7 @@ fail:
 		ubi_dump_vol_info(vol);
 	ubi_dump_vtbl_record(&ubi->vtbl[vol_id], vol_id);
 	dump_stack();
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	return -EINVAL;
 }
 

@@ -162,7 +162,7 @@ struct ubi_volume_desc *ubi_open_volume(int ubi_num, int vol_id, int mode)
 	if (!try_module_get(THIS_MODULE))
 		goto out_free;
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	vol = ubi->volumes[vol_id];
 	if (!vol)
 		goto out_unlock;
@@ -196,7 +196,7 @@ struct ubi_volume_desc *ubi_open_volume(int ubi_num, int vol_id, int mode)
 	}
 	get_device(&vol->dev);
 	vol->ref_count += 1;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	desc->vol = vol;
 	desc->mode = mode;
@@ -222,7 +222,7 @@ struct ubi_volume_desc *ubi_open_volume(int ubi_num, int vol_id, int mode)
 	return desc;
 
 out_unlock:
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 	module_put(THIS_MODULE);
 out_free:
 	kfree(desc);
@@ -265,7 +265,7 @@ struct ubi_volume_desc *ubi_open_volume_nm(int ubi_num, const char *name,
 	if (!ubi)
 		return ERR_PTR(-ENODEV);
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	/* Walk all volumes of this UBI device */
 	for (i = 0; i < ubi->vtbl_slots; i++) {
 		struct ubi_volume *vol = ubi->volumes[i];
@@ -275,7 +275,7 @@ struct ubi_volume_desc *ubi_open_volume_nm(int ubi_num, const char *name,
 			break;
 		}
 	}
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	if (vol_id >= 0)
 		ret = ubi_open_volume(ubi_num, vol_id, mode);
@@ -343,7 +343,7 @@ void ubi_close_volume(struct ubi_volume_desc *desc)
 	dbg_gen("close device %d, volume %d, mode %d",
 		ubi->ubi_num, vol->vol_id, desc->mode);
 
-	spin_lock(&ubi->volumes_lock);
+	mutex_lock(&ubi->volumes_lock);
 	switch (desc->mode) {
 	case UBI_READONLY:
 		vol->readers -= 1;
@@ -359,7 +359,7 @@ void ubi_close_volume(struct ubi_volume_desc *desc)
 		break;
 	}
 	vol->ref_count -= 1;
-	spin_unlock(&ubi->volumes_lock);
+	mutex_unlock(&ubi->volumes_lock);
 
 	kfree(desc);
 	put_device(&vol->dev);
