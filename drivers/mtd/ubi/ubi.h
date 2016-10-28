@@ -585,7 +585,7 @@ struct ubi_device {
 	int mean_ec;
 
 	/* EBA sub-system's stuff */
-	unsigned long long global_sqnum;
+	atomic64_t global_sqnum;
 	struct mutex ltree_lock;
 	struct rb_root ltree;
 	struct mutex alc_mutex;

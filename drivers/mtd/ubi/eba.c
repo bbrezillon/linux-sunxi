@@ -83,13 +83,7 @@ struct ubi_eba_table {
  */
 unsigned long long ubi_next_sqnum(struct ubi_device *ubi)
 {
-	unsigned long long sqnum;
-
-	mutex_lock(&ubi->ltree_lock);
-	sqnum = ubi->global_sqnum++;
-	mutex_unlock(&ubi->ltree_lock);
-
-	return sqnum;
+	return atomic64_inc_return(&ubi->global_sqnum);
 }
 
 /**
@@ -1523,7 +1517,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	mutex_init(&ubi->alc_mutex);
 	ubi->ltree = RB_ROOT;
 
-	ubi->global_sqnum = ai->max_sqnum + 1;
+	atomic64_set(&ubi->global_sqnum, ai->max_sqnum + 1);
 	num_volumes = ubi->vtbl_slots + UBI_INT_VOL_COUNT;
 
 	for (i = 0; i < num_volumes; i++) {
