@@ -200,7 +200,6 @@ struct ubi_wl_entry {
 /**
  * struct ubi_ltree_entry - an entry in the lock tree.
  * @rb: links RB-tree nodes
- * @vol_id: volume ID of the locked logical eraseblock
  * @lnum: locked logical eraseblock number
  * @users: how many tasks are using this logical eraseblock or wait for it
  * @mutex: read/write mutex to implement read/write access serialization to
@@ -213,7 +212,6 @@ struct ubi_wl_entry {
  */
 struct ubi_ltree_entry {
 	struct rb_node rb;
-	int vol_id;
 	int lnum;
 	int users;
 	struct rw_semaphore mutex;
@@ -326,6 +324,9 @@ struct ubi_eba_leb_desc {
  * @upd_buf: update buffer which is used to collect update data or data for
  *           atomic LEB change
  *
+ * @ltree_lock: protects the lock tree and @global_sqnum
+ * @ltree: the lock tree
+ *
  * @eba_tbl: EBA table of this volume (LEB->PEB mapping)
  * @checked: %1 if this static volume was checked
  * @corrupted: %1 if the volume is corrupted (static volumes only)
@@ -369,6 +370,9 @@ struct ubi_volume {
 	long long upd_bytes;
 	long long upd_received;
 	void *upd_buf;
+
+	struct mutex ltree_lock;
+	struct rb_root ltree;
 
 	struct ubi_eba_table *eba_tbl;
 	unsigned int checked:1;
@@ -476,8 +480,6 @@ struct ubi_debug_info {
  * @mean_ec: current mean erase counter value
  *
  * @global_sqnum: global sequence number
- * @ltree_lock: protects the lock tree and @global_sqnum
- * @ltree: the lock tree
  * @alc_mutex: serializes "atomic LEB change" operations
  *
  * @fm_disabled: non-zero if fastmap is disabled (default)
@@ -586,8 +588,6 @@ struct ubi_device {
 
 	/* EBA sub-system's stuff */
 	atomic64_t global_sqnum;
-	struct mutex ltree_lock;
-	struct rb_root ltree;
 	struct mutex alc_mutex;
 
 	/* Fastmap stuff */
