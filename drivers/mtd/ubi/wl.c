@@ -666,7 +666,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 
 	vid_hdr = ubi_get_vid_hdr(vidb);
 
-	down_read(&ubi->fm_eba_sem);
+	down_read(&ubi->eba_sem);
 	mutex_lock(&ubi->move_mutex);
 	mutex_lock(&ubi->wl_lock);
 	ubi_assert(!ubi->move_from && !ubi->move_to);
@@ -897,7 +897,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 
 	dbg_wl("done");
 	mutex_unlock(&ubi->move_mutex);
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 	return 0;
 
 	/*
@@ -948,7 +948,7 @@ out_not_moved:
 	}
 
 	mutex_unlock(&ubi->move_mutex);
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 	return 0;
 
 out_error:
@@ -970,7 +970,7 @@ out_error:
 out_ro:
 	ubi_ro_mode(ubi);
 	mutex_unlock(&ubi->move_mutex);
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 	ubi_assert(err != 0);
 	return err < 0 ? err : -EIO;
 
@@ -978,7 +978,7 @@ out_cancel:
 	ubi->wl_scheduled = 0;
 	mutex_unlock(&ubi->wl_lock);
 	mutex_unlock(&ubi->move_mutex);
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 	ubi_free_vid_buf(vidb);
 	return 0;
 }
@@ -1872,7 +1872,7 @@ static int produce_free_peb(struct ubi_device *ubi)
  *
  * This function returns a physical eraseblock in case of success and a
  * negative error code in case of failure.
- * Returns with ubi->fm_eba_sem held in read mode!
+ * Returns with ubi->eba_sem held in read mode!
  */
 int ubi_wl_get_peb(struct ubi_device *ubi)
 {
@@ -1880,7 +1880,7 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 	struct ubi_wl_entry *e;
 
 retry:
-	down_read(&ubi->fm_eba_sem);
+	down_read(&ubi->eba_sem);
 	mutex_lock(&ubi->wl_lock);
 	if (!ubi->free.rb_node) {
 		if (ubi->works_count == 0) {
@@ -1896,7 +1896,7 @@ retry:
 			return err;
 		}
 		mutex_unlock(&ubi->wl_lock);
-		up_read(&ubi->fm_eba_sem);
+		up_read(&ubi->eba_sem);
 		goto retry;
 
 	}

@@ -1494,12 +1494,12 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 
 	down_write(&ubi->fm_protect);
 	down_write(&ubi->work_sem);
-	down_write(&ubi->fm_eba_sem);
+	down_write(&ubi->eba_sem);
 
 	ubi_refill_pools(ubi);
 
 	if (ubi->ro_mode || ubi->fm_disabled) {
-		up_write(&ubi->fm_eba_sem);
+		up_write(&ubi->eba_sem);
 		up_write(&ubi->work_sem);
 		up_write(&ubi->fm_protect);
 		return 0;
@@ -1507,7 +1507,7 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 
 	ret = ubi_ensure_anchor_pebs(ubi);
 	if (ret) {
-		up_write(&ubi->fm_eba_sem);
+		up_write(&ubi->eba_sem);
 		up_write(&ubi->work_sem);
 		up_write(&ubi->fm_protect);
 		return ret;
@@ -1515,7 +1515,7 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 
 	new_fm = kzalloc(sizeof(*new_fm), GFP_KERNEL);
 	if (!new_fm) {
-		up_write(&ubi->fm_eba_sem);
+		up_write(&ubi->eba_sem);
 		up_write(&ubi->work_sem);
 		up_write(&ubi->fm_protect);
 		return -ENOMEM;
@@ -1631,7 +1631,7 @@ int ubi_update_fastmap(struct ubi_device *ubi)
 		goto err;
 
 out_unlock:
-	up_write(&ubi->fm_eba_sem);
+	up_write(&ubi->eba_sem);
 	up_write(&ubi->work_sem);
 	up_write(&ubi->fm_protect);
 	kfree(old_fm);

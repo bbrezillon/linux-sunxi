@@ -481,6 +481,7 @@ struct ubi_debug_info {
  *
  * @global_sqnum: global sequence number
  * @alc_mutex: serializes "atomic LEB change" operations
+ * @eba_sem: allows one to block EBA table changes
  *
  * @fm_disabled: non-zero if fastmap is disabled (default)
  * @fm: in-memory data structure of the currently used fastmap
@@ -491,7 +492,6 @@ struct ubi_debug_info {
  * that critical sections cannot be interrupted by ubi_update_fastmap()
  * @fm_buf: vmalloc()'d buffer which holds the raw fastmap
  * @fm_size: fastmap size in bytes
- * @fm_eba_sem: allows ubi_update_fastmap() to block EBA table changes
  * @fm_work: fastmap work queue
  * @fm_work_scheduled: non-zero if fastmap work was scheduled
  * @fast_attach: non-zero if UBI was attached by fastmap
@@ -589,13 +589,13 @@ struct ubi_device {
 	/* EBA sub-system's stuff */
 	atomic64_t global_sqnum;
 	struct mutex alc_mutex;
+	struct rw_semaphore eba_sem;
 
 	/* Fastmap stuff */
 	int fm_disabled;
 	struct ubi_fastmap_layout *fm;
 	struct ubi_fm_pool fm_pool;
 	struct ubi_fm_pool fm_wl_pool;
-	struct rw_semaphore fm_eba_sem;
 	struct rw_semaphore fm_protect;
 	void *fm_buf;
 	size_t fm_size;

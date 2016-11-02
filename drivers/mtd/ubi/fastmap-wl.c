@@ -201,7 +201,7 @@ static int produce_free_peb(struct ubi_device *ubi)
  *
  * This function returns a physical eraseblock in case of success and a
  * negative error code in case of failure.
- * Returns with ubi->fm_eba_sem held in read mode!
+ * Returns with ubi->eba_sem held in read mode!
  */
 int ubi_wl_get_peb(struct ubi_device *ubi)
 {
@@ -210,21 +210,21 @@ int ubi_wl_get_peb(struct ubi_device *ubi)
 	struct ubi_fm_pool *wl_pool = &ubi->fm_wl_pool;
 
 again:
-	down_read(&ubi->fm_eba_sem);
+	down_read(&ubi->eba_sem);
 	mutex_lock(&ubi->wl_lock);
 
 	/* We check here also for the WL pool because at this point we can
 	 * refill the WL pool synchronous. */
 	if (pool->used == pool->size || wl_pool->used == wl_pool->size) {
 		mutex_unlock(&ubi->wl_lock);
-		up_read(&ubi->fm_eba_sem);
+		up_read(&ubi->eba_sem);
 		ret = ubi_update_fastmap(ubi);
 		if (ret) {
 			ubi_msg(ubi, "Unable to write a new fastmap: %i", ret);
-			down_read(&ubi->fm_eba_sem);
+			down_read(&ubi->eba_sem);
 			return -ENOSPC;
 		}
-		down_read(&ubi->fm_eba_sem);
+		down_read(&ubi->eba_sem);
 		mutex_lock(&ubi->wl_lock);
 	}
 
@@ -236,10 +236,10 @@ again:
 			goto out;
 		}
 		retried = 1;
-		up_read(&ubi->fm_eba_sem);
+		up_read(&ubi->eba_sem);
 		ret = produce_free_peb(ubi);
 		if (ret < 0) {
-			down_read(&ubi->fm_eba_sem);
+			down_read(&ubi->eba_sem);
 			goto out;
 		}
 		goto again;
@@ -262,7 +262,7 @@ static struct ubi_wl_entry *get_peb_for_wl(struct ubi_device *ubi)
 	struct ubi_fm_pool *pool = &ubi->fm_wl_pool;
 	int pnum;
 
-	ubi_assert(rwsem_is_locked(&ubi->fm_eba_sem));
+	ubi_assert(rwsem_is_locked(&ubi->eba_sem));
 
 	if (pool->used == pool->size) {
 		/* We cannot update the fastmap here because this

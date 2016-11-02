@@ -960,7 +960,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	mutex_init(&ubi->device_mutex);
 	mutex_init(&ubi->volumes_lock);
 	init_rwsem(&ubi->fm_protect);
-	init_rwsem(&ubi->fm_eba_sem);
+	init_rwsem(&ubi->eba_sem);
 
 	ubi_msg(ubi, "attaching mtd%d", mtd->index);
 

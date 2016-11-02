@@ -453,9 +453,9 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 
 	dbg_eba("erase LEB %d:%d, PEB %d", vol_id, lnum, pnum);
 
-	down_read(&ubi->fm_eba_sem);
+	down_read(&ubi->eba_sem);
 	vol->eba_tbl->entries[lnum].pnum = UBI_LEB_UNMAPPED;
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 	err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 0);
 
 out_unlock:
@@ -750,7 +750,7 @@ out_unlock:
 		vol->eba_tbl->entries[lnum].pnum = new_pnum;
 
 out_put:
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 
 	if (!err) {
 		ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
@@ -863,7 +863,7 @@ static int try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 	vol->eba_tbl->entries[lnum].pnum = pnum;
 
 out_put:
-	up_read(&ubi->fm_eba_sem);
+	up_read(&ubi->eba_sem);
 
 	if (err && pnum >= 0)
 		err = ubi_wl_put_peb(ubi, vol_id, lnum, pnum, 1);
@@ -1184,7 +1184,7 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 	struct ubi_volume *vol;
 	uint32_t crc;
 
-	ubi_assert(rwsem_is_locked(&ubi->fm_eba_sem));
+	ubi_assert(rwsem_is_locked(&ubi->eba_sem));
 
 	vol_id = be32_to_cpu(vid_hdr->vol_id);
 	lnum = be32_to_cpu(vid_hdr->lnum);
