@@ -466,6 +466,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	/* Reserve physical eraseblocks */
 	pebs = reserved_pebs - vol->reserved_pebs;
 	if (pebs > 0) {
+		down_write(&ubi->eba_sem);
 		mutex_lock(&ubi->volumes_lock);
 		if (pebs > ubi->avail_pebs) {
 			ubi_err(ubi, "not enough PEBs: requested %d, available %d",
@@ -474,6 +475,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 				ubi_err(ubi, "%d PEBs are corrupted and not used",
 					ubi->corr_peb_count);
 			mutex_unlock(&ubi->volumes_lock);
+			up_write(&ubi->eba_sem);
 			err = -ENOSPC;
 			goto out_free;
 		}
@@ -482,6 +484,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		ubi_eba_copy_table(vol, new_eba_tbl, vol->reserved_pebs);
 		ubi_eba_replace_table(vol, new_eba_tbl);
 		mutex_unlock(&ubi->volumes_lock);
+		up_write(&ubi->eba_sem);
 	}
 
 	if (pebs < 0) {
@@ -490,6 +493,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 			if (err)
 				goto out_acc;
 		}
+		down_write(&ubi->eba_sem);
 		mutex_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs += pebs;
 		ubi->avail_pebs -= pebs;
@@ -497,6 +501,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		ubi_eba_copy_table(vol, new_eba_tbl, reserved_pebs);
 		ubi_eba_replace_table(vol, new_eba_tbl);
 		mutex_unlock(&ubi->volumes_lock);
+		up_write(&ubi->eba_sem);
 	}
 
 	/*
