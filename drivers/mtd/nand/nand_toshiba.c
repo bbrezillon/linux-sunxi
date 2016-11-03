@@ -41,6 +41,7 @@ static int toshiba_nand_init(struct nand_chip *chip)
 
 	nand_to_mtd(chip)->pairing = &dist3_pairing_scheme;
 	chip->onfi_timing_mode_default = 3;
+	chip->options |= NAND_NEED_SCRAMBLING;
 	return 0;
 }
 
