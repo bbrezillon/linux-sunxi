@@ -2193,6 +2193,7 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	pm_runtime_use_autosuspend(musb->controller);
 	pm_runtime_set_autosuspend_delay(musb->controller, 500);
 	pm_runtime_enable(musb->controller);
+	pm_runtime_irq_safe(musb->controller);
 	pm_runtime_get_sync(musb->controller);
 
 	status = usb_phy_init(musb->xceiv);
