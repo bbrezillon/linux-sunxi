@@ -522,7 +522,17 @@ bool ubi_eba_is_mapped(struct ubi_volume *vol, int lnum)
 static struct ubi_peb_desc *ubi_eba_invalidate_entry(struct ubi_volume *vol,
 						     int lnum)
 {
-	return vol->eba_tbl_ops->invalidate_entry(vol, lnum);
+	struct ubi_peb_desc *pdesc;
+	struct ubi_eba_leb_desc nldesc;
+
+	pdesc = vol->eba_tbl_ops->invalidate_entry(vol, lnum);
+
+	ubi_eba_get_ldesc(vol, lnum, &nldesc);
+	ubi_assert(nldesc.lnum == lnum);
+	ubi_assert(nldesc.pnum == UBI_LEB_UNMAPPED);
+	ubi_assert(nldesc.lpos == UBI_EBA_NA);
+
+	return pdesc;
 }
 
 /**
@@ -540,7 +550,15 @@ static struct ubi_peb_desc *ubi_eba_invalidate_entry(struct ubi_volume *vol,
 static struct ubi_peb_desc *ubi_eba_update_entry(struct ubi_volume *vol,
 					const struct ubi_eba_leb_desc *ldesc)
 {
+	struct ubi_eba_leb_desc nldesc;
+
 	return vol->eba_tbl_ops->update_entry(vol, ldesc);
+
+	ubi_eba_get_ldesc(vol, ldesc->lnum, &nldesc);
+
+	ubi_assert(ldesc->lnum == nldesc.lnum);
+	ubi_assert(ldesc->pnum == nldesc.pnum);
+	ubi_assert(ldesc->lpos == nldesc.lpos);
 }
 
 /**
@@ -722,6 +740,9 @@ int ubi_eba_write_leb_data(struct ubi_volume *vol,
 
 	offset += loffset;
 
+	pr_info("%s:%i LEB %d:%d +%08x PEB %d +%08x iomode %d\n",
+		__func__, __LINE__, vol->vol_id, ldesc->lnum,
+		loffset, ldesc->pnum, offset, io_mode);
 	return ubi_io_write_data(ubi, buf, ldesc->pnum, offset, len, io_mode);
 }
 

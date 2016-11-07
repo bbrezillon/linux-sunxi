@@ -1100,13 +1100,18 @@ static int validate_lpos(const struct ubi_device *ubi,
 	if (!vid_hdr->lpos)
 		return 0;
 
-	if (vid_hdr->version < 2 || vid_hdr->vol_mode != UBI_VID_MODE_MLC_SAFE)
+	if (vid_hdr->version < 2 || vid_hdr->vol_mode != UBI_VID_MODE_MLC_SAFE) {
+		pr_info("%s:%i version = %d vol_mode = %d\n", __func__, __LINE__,
+			vid_hdr->version, vid_hdr->vol_mode);
 		goto err;
+	}
 
 	if (vid_hdr->lpos != UBI_VID_LPOS_CONSOLIDATED &&
 	    vid_hdr->lpos != UBI_VID_LPOS_INVALID &&
-	    vid_hdr->lpos >= ubi->max_lebs_per_peb)
+	    vid_hdr->lpos >= ubi->max_lebs_per_peb) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		goto err;
+	}
 
 	return 0;
 
@@ -1360,8 +1365,10 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 	 * we have an empty PEB.
 	 */
 	err = check_vid_hdr(ubi, pnum, vid_hdr, read_err, true, verbose);
-	if (err)
+	if (err) {
+		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 		return err;
+	}
 
 	/* This is a real VID header, return now. */
 	if (!vid_hdr->lpos) {
@@ -1369,6 +1376,7 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 		return read_err ? UBI_IO_BITFLIPS : 0;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	/*
 	 * We retrieved a dummy VID header. Look at the end of the PEB for the
 	 * real one.
@@ -1389,17 +1397,21 @@ int ubi_io_read_vid_hdr(struct ubi_device *ubi, int pnum,
 		err = check_vid_hdr(ubi, pnum, vid_hdr, read_err, false,
 				    verbose);
 		if (err) {
+			pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 			if (err == UBI_IO_BAD_HDR &&
 			    ubi_check_pattern(p, 0xff, ubi->vid_hdr_alsize))
 				return UBI_IO_INCOMPLETE_CONSO;
 
+			pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 			return err;
 		}
 
 		/* Make sure the lpos value is consistent. */
 		if (vid_hdr[i].lpos != i &&
-		    vid_hdr[i].lpos != UBI_VID_LPOS_INVALID)
+		    vid_hdr[i].lpos != UBI_VID_LPOS_INVALID) {
+			pr_info("%s:%i vid_hdr[%d].lpos = %d\n", __func__, __LINE__, i, vid_hdr[i].lpos);
 			return -EINVAL;
+		}
 	}
 
 	vidb->nhdrs = ubi->max_lebs_per_peb;
