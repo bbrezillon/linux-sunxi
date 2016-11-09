@@ -1139,6 +1139,26 @@ out_unlock:
 	return err;
 }
 
+int ubi_wl_get_ec(struct ubi_device *ubi, int pnum)
+{
+	struct ubi_wl_entry *e = ubi->lookuptbl[pnum];
+
+	return e->ec;
+}
+
+int ubi_wl_mark_bad(struct ubi_device *ubi, int pnum)
+{
+	int err;
+
+	ubi_msg(ubi, "mark PEB %d as bad", pnum);
+	err = ubi_io_mark_bad(ubi, pnum);
+	if (err)
+		return err;
+
+	/* FIXME: copy BB handling done in __erase_worker() here. */
+	return 0;
+}
+
 /**
  * __erase_worker - physical eraseblock erase worker function.
  * @ubi: UBI device description object

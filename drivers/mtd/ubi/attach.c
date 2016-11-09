@@ -1162,6 +1162,65 @@ static struct ubi_ainf_peb *vidb_to_apeb(struct ubi_device *ubi,
 	return apeb;
 }
 
+static struct ubi_ainf_peb *ubi_attach_scan_ec(struct ubi_device *ubi,
+					       struct ubi_attach_info *ai,
+					       int pnum)
+{
+	struct ubi_ec_hdr *ech = ai->ech;
+	struct ubi_ainf_peb *apeb;
+	int err, ec, ec_err, bitflips = 0;
+
+	/* Skip bad physical eraseblocks */
+	err = ubi_io_is_bad(ubi, pnum);
+	if (err < 0) {
+		return ERR_PTR(err);
+	} else if (err) {
+		ai->bad_peb_count += 1;
+		set_bit(pnum, ai->ec_scan_map);
+		ai->scanned_ec++;
+		set_bit(pnum, ai->vid_scan_map);
+		ai->scanned_vid++;
+		return NULL;
+	}
+
+	err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
+	if (err < 0)
+		return err;
+	switch (err) {
+	case 0:
+		break;
+	case UBI_IO_BITFLIPS:
+		bitflips = 1;
+		break;
+	case UBI_IO_FF:
+		ai->empty_peb_count += 1;
+		return add_to_list(ai, pnum, UBI_UNKNOWN, UBI_UNKNOWN,
+				   UBI_UNKNOWN, 0, &ai->erase);
+	case UBI_IO_FF_BITFLIPS:
+		ai->empty_peb_count += 1;
+		return add_to_list(ai, pnum, UBI_UNKNOWN, UBI_UNKNOWN,
+				   UBI_UNKNOWN, 1, &ai->erase);
+	case UBI_IO_BAD_HDR_EBADMSG:
+	case UBI_IO_BAD_HDR:
+		/*
+		 * We have to also look at the VID header, possibly it is not
+		 * corrupted. Set %bitflips flag in order to make this PEB be
+		 * moved and EC be re-created.
+		 */
+		ec_err = err;
+		ec = UBI_UNKNOWN;
+		bitflips = 1;
+		break;
+	default:
+		ubi_err(ubi, "'ubi_io_read_ec_hdr()' returned unknown code %d",
+			err);
+		return ERR_PTR(-EINVAL);
+	}
+
+	apeb = ubi_alloc_apeb(ai, pnum, ec);
+	list_add_tail(&apeb->node, &ai->partially_scanned);
+}
+
 /**
  * scan_peb - scan and process UBI headers of a PEB.
  * @ubi: UBI device description object

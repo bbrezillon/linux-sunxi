@@ -896,6 +896,14 @@ bad:
 	return 1;
 }
 
+int ubi_io_leb_size(struct ubi_device *ubi, enum ubi_io_mode mode)
+{
+	if (mode == UBI_IO_MODE_NORMAL)
+		return ubi->leb_size;
+
+	return (ubi->peb_size / ubi->max_lebs_per_peb) - ubi->leb_start;
+}
+
 /**
  * ubi_io_read_ec_hdr - read and check an erase counter header.
  * @ubi: UBI device description object

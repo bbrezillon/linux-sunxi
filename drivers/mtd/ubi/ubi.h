@@ -678,6 +678,9 @@ struct ubi_device {
 	struct mutex alc_mutex;
 	struct rw_semaphore eba_sem;
 
+	/* Journal stuff */
+	struct ubi_journal *jnl;
+
 	/* Fastmap stuff */
 	int fm_disabled;
 	struct ubi_fastmap_layout *fm;
@@ -883,6 +886,7 @@ struct ubi_attach_info {
 	struct list_head erase;
 	struct list_head alien;
 	struct list_head fastmap;
+	struct list_head partially_scanned;
 	int corr_peb_count;
 	int empty_peb_count;
 	int alien_peb_count;
@@ -902,6 +906,10 @@ struct ubi_attach_info {
 	struct kmem_cache *aleb_slab_cache;
 	struct ubi_ec_hdr *ech;
 	struct ubi_vid_io_buf *vidb;
+	unsigned long *ec_scan_map;
+	int scanned_ec;
+	unsigned long *vid_scan_map;
+	int scanned_vid;
 };
 
 /**
@@ -1155,6 +1163,8 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *used_e,
 int ubi_is_erase_work(struct ubi_work *wrk);
 void ubi_refill_pools(struct ubi_device *ubi);
 int ubi_ensure_anchor_pebs(struct ubi_device *ubi);
+int ubi_wl_mark_bad(struct ubi_device *ubi, int pnum);
+int ubi_wl_get_ec(struct ubi_device *ubi, int pnum);
 
 /* io.c */
 int ubi_io_read(const struct ubi_device *ubi, void *buf, int pnum, int offset,
