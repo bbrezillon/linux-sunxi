@@ -382,6 +382,7 @@ static int fill_jbuf_with_peb_op(struct ubi_device *ubi, struct ubi_jnl_op *op)
 
 	pnode.type = UBI_JNL_PEB_NODE;
 	pnode.op = peb_op->type;
+	pnode.ec = cpu_to_be32(ubi_wl_get_ec(ubi, pnum));
 	pnode.pnum = cpu_to_be32(pnum);
 
 	memcpy(jbuf->buf + jbuf->used, &pnode, sizeof(pnode));
@@ -700,14 +701,11 @@ static void fill_layout_node(struct ubi_device *ubi)
 
 static int ubi_jnl_write_summary(struct ubi_device *ubi)
 {
-	int i, new_tail, new_head, nlebs, offs;
-	int leb_size, len, ret, pad;
 	struct ubi_journal *jnl = ubi->jnl;
 	struct ubi_jnl_buf *jbuf = &jnl->jbuf;
 	struct ubi_jnl_summary_node *snode;
-	struct ubi_vid_io_buf vidb;
-	struct ubi_vid_hdr *vidh;
 	u32 crc;
+	int i;
 
 	memset(jbuf->buf, 0, jnl->max_summary_size);
 
@@ -726,80 +724,7 @@ static int ubi_jnl_write_summary(struct ubi_device *ubi)
 	snode->npebs = cpu_to_be32(ubi->peb_count);
 	snode->type = UBI_JNL_SUMMARY_NODE;
 
-	pad = ALIGN(jbuf->used, ubi->min_io_size) - jbuf->used;
-	memset(jbuf->buf + jbuf->used, 0, pad);
-	jbuf->used += pad;
-
-	leb_size = ubi_io_leb_size(ubi, UBI_IO_MODE_SLC);
-	nlebs = DIV_ROUND_UP(jbuf->used, leb_size);
-
-	/* TODO: write the summary on the flash. */
-	new_tail = (jnl->head_lnum + 1) % jnl->nlebs;
-	new_head = new_tail;
-
-	for (offs = 0; offs < jbuf->used; offs += len) {
-		int pnum = jnl->pnums[new_head];
-		int loffset = offs % leb_size;
-
-		len = min(ubi->max_write_size, jbuf->used - offs);
-		len = min(len, leb_size - loffset);
-		ret = ubi_io_write_data(ubi, jbuf->buf, pnum, loffset, len,
-					UBI_IO_MODE_SLC);
-		if (ret)
-			return ret;
-
-		loffset += len;
-		if (loffset == leb_size)
-			new_head++;
-	}
-
-	ubi_init_vid_buf(ubi, &vidb, jbuf->buf);
-	vidh = ubi_get_vid_hdr(&vidb);
-
-	vidh->vol_type = UBI_VID_DYNAMIC;
-	vidh->vol_mode = UBI_VID_MODE_SLC;
-	vidh->vol_id = cpu_to_be32(UBI_JNL_VOLUME_ID);
-	vidh->compat = UBI_COMPAT_REJECT;
-
-	/* Erase the old journal and refill the journal LEBs pool. */
-	for (i = jnl->tail_lnum; i < new_tail; i = (i + 1) % jnl->nlebs) {
-		struct ubi_peb_desc *pdesc;
-		int pnum;
-
-		/* FIXME: NOFS ??? */
-		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
-		if (!pdesc)
-			return -ENOMEM;
-
-		pdesc->pnum = jnl->pnums[new_head];
-		pdesc->vol_id = UBI_JNL_VOLUME_ID;
-		pdesc->lnums[0] = i;
-
-		ret = ubi_wl_sync_erase(ubi, pdesc, 0);
-		if (ret)
-			return ret;
-
-		/* Create and call a non-blocking function? */
-		pnum = ubi_wl_get_peb(ubi);
-		if (ret < 0)
-			return pnum;
-
-		vidh->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
-		vidh->lnum = cpu_to_be32(i);
-
-		ret = ubi_io_write_vid_hdr(ubi, pnum, vidb);
-		if (ret)
-			return ret;
-
-		jnl->pnums[new_head] = pnum;
-	}
-
 	return 0;
-}
-
-static int ubi_jnl_scan(struct ubi_device *ubi, int head, int tail)
-{
-
 }
 
 static int scan_ec(struct ubi_device *ubi, struct ubi_attach_info *ai,
@@ -899,13 +824,9 @@ static int scan_ec(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	/*
 	 * If both head an tail are set to zero, this means this PEB knows
 	 * nothing about the UBI journal.
-	 * Start iterating at the first EC header that was not scanned.
 	 */
-	if (!ech->jnl_head && !ech->jnl_tail) {
-		*next_pnum = find_first_zero_bit(ai->ec_scan_map,
-						 ubi->peb_count);
+	if (!ech->jnl_head && !ech->jnl_tail)
 		return 0;
-	}
 
 	*next_pnum = ech->jnl_head;
 
@@ -914,15 +835,11 @@ static int scan_ec(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 int ubi_jnl_attach(struct ubi_device *ubi, struct ubi_attach_info *ai)
 {
-	int pnum = 0, err;
+	int pnum;
 
 	while (ai->scanned_ec < ubi->peb_count) {
-		err = scan_ec(ubi, ai, pnum, &pnum);
-		if (err)
-			return err;
-	}
 
-	return 0;
+	}
 }
 
 static int scan_jnl(struct ubi_device *ubi)
@@ -1050,7 +967,7 @@ static void calc_max_summary_size(struct ubi_device *ubi)
 	 */
 	size += sizeof(struct ubi_jnl_layout_node) +
 		(num_jnl_lebs * 2 * sizeof(__be32));
-	size = ALIGN(size, max(8, ubi->max_write_size));
+	size = ALIGN(size, 8);
 
 	num_jnl_lebs = calc_jnl_size_in_lebs(ubi, size);
 
@@ -1066,7 +983,6 @@ static int init_jbuf(struct ubi_device *ubi)
 	calc_max_summary_size(ubi);
 
 	size = max(jnl->max_summary_size, ubi->max_write_size);
-	size = max(size, ubi->vid_hdr_alsize);
 
 	jbuf->buf = vmalloc(size, GFP_KERNEL);
 	if (!jbuf->buf)

@@ -34,7 +34,7 @@
 
 /* The version of UBI images supported by this implementation */
 #define UBI_CURRENT_VERSION		2
-#define 	(x)		BIT(x)
+#define UBI_SUPPORTS_VERSION(x)		BIT(x)
 #define UBI_SUPPORTED_VERSIONS		(UBI_SUPPORTS_VERSION(1) |	\
 					 UBI_SUPPORTS_VERSION(2))
 #define UBI_VERSION_IS_SUPPORTED(x)	(BIT((x)) & UBI_SUPPORTED_VERSIONS)
@@ -622,6 +622,8 @@ struct ubi_jnl_peb_node {
 	__u8 flags;
 	__u8 padding1[1];
 	__be32 pnum;
+	__be32 ec;
+	__u8 padding2[4];
 };
 
 enum ubi_jnl_leb_op_type {
