@@ -591,15 +591,18 @@ static int init_volumes(struct ubi_device *ubi,
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
 		if (vtbl[i].vol_mode == UBI_VID_MODE_SLC) {
 			vol->vol_mode = UBI_VOL_MODE_SLC;
-			vol->leb_size = ubi_io_leb_size(ubi, UBI_IO_MODE_SLC);
+			vol->leb_size = (ubi->peb_size /
+					 ubi->max_lebs_per_peb) -
+					ubi->leb_start;
 		} else if (vtbl[i].vol_mode == UBI_VID_MODE_MLC_SAFE) {
 			vol->vol_mode = UBI_VOL_MODE_MLC_SAFE;
-			vol->leb_size = ubi_io_leb_size(ubi, UBI_IO_MODE_SLC);
+			vol->leb_size = (ubi->peb_size /
+					 ubi->max_lebs_per_peb) -
+					ubi->leb_start;
 			vol->slc_ratio = vtbl[i].slc_ratio;
 		} else {
 			vol->vol_mode = UBI_VOL_MODE_NORMAL;
-			vol->leb_size = ubi_io_leb_size(ubi,
-							UBI_IO_MODE_NORMAL);
+			vol->leb_size = ubi->leb_size;
 		}
 		vol->name_len = be16_to_cpu(vtbl[i].name_len);
 		vol->usable_leb_size = vol->leb_size - vol->data_pad;
