@@ -635,6 +635,12 @@ static int do_sync_erase(struct ubi_device *ubi,
 	return ret;
 }
 
+int ubi_wl_sync_erase(struct ubi_device *ubi,
+		      const struct ubi_peb_desc *pdesc, int torture)
+{
+	return do_sync_erase(ubi, pdesc, torture);
+}
+
 static struct ubi_peb_desc *pdesc_from_vidb(struct ubi_device *ubi, int pnum,
 					    struct ubi_vid_io_buf *vidb)
 {
