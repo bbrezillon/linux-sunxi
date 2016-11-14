@@ -1124,6 +1124,7 @@ int ubi_eba_atomic_leb_change(struct ubi_device *ubi, struct ubi_volume *vol,
 			      int lnum, const void *buf, int len);
 int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		     struct ubi_vid_io_buf *vidb);
+int ubi_eba_gc_pebs(struct ubi_volume *vol);
 int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai);
 unsigned long long ubi_next_sqnums(struct ubi_device *ubi, int num);
 unsigned long long ubi_next_sqnum(struct ubi_device *ubi);

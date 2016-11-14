@@ -38,12 +38,19 @@ struct ubi_eba_mleb_entry {
 	struct list_head node;
 	unsigned int consolidated:1;
 	unsigned int invalid:1;
-	unsigned int hidden:1;
-	unsigned int hide:1;
+	unsigned int nzombies:30;
 	union {
 		int pnum;
 		struct ubi_consolidated_peb *cpeb;
 	};
+};
+
+/**
+ *
+ */
+struct ubi_eba_mleb_gc_entry {
+	struct list_head node;
+	struct ubi_peb_desc *pdesc;
 };
 
 /**
@@ -93,6 +100,7 @@ struct ubi_eba_mleb_table {
 		struct ubi_eba_mleb_list *dirty;
 	} closed;
 	struct ubi_eba_mleb_list corrupted;
+	struct ubi_eba_mleb_list gc;
 	int free_pebs;
 	int consolidable_lebs;
 	int conso_high_wm;
@@ -150,6 +158,7 @@ static void mleb_init_entry(struct ubi_eba_mleb_entry *entry)
 	entry->pnum = UBI_LEB_UNMAPPED;
 	entry->consolidated = false;
 	entry->invalid = true;
+	entry->nzombies = 0;
 }
 
 #define mleb_list_for_each_entry(e, l)				\
@@ -300,9 +309,15 @@ static void ubi_eba_mleb_get_ldesc(struct ubi_volume *vol, int lnum,
 	struct ubi_eba_mleb_entry *entry = &tbl->entries[lnum];
 
 	ldesc->lnum = lnum;
-	if (entry->consolidated) {
+	pr_info("LEB %d:%d invalid = %d nzombies = %d consolidated = %d\n", vol->vol_id, lnum, entry->invalid, entry->nzombies, entry->consolidated);
+	if (entry->invalid) {
+		ldesc->pnum = UBI_LEB_UNMAPPED;
+		ldesc->lpos = UBI_EBA_NA;
+	} else if (entry->consolidated) {
 		struct ubi_consolidated_peb *cpeb = entry->cpeb;
 		int i;
+
+		pr_info("cpeb %p\n", cpeb);
 
 		ldesc->pnum = cpeb->pnum;
 		for (i = 0; i < vol->ubi->max_lebs_per_peb; i++) {
@@ -317,6 +332,157 @@ static void ubi_eba_mleb_get_ldesc(struct ubi_volume *vol, int lnum,
 		ldesc->pnum = entry->pnum;
 		ldesc->lpos = UBI_EBA_NA;
 	}
+	pr_info("%s:%i\n", __func__, __LINE__);
+}
+
+//static int count_zombies(struct ubi_volume *vol,
+//			 struct ubi_eba_leb_desc *ldesc)
+//{
+//	struct ubi_device *ubi = vol->ubi;
+//	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
+//	int i, j, count = 0;
+//
+//	for (i = 0; i < ubi->max_lebs_per_peb - 1; i++) {
+//		struct list_head *list = &tbl->closed.dirty[i];
+//		struct ubi_eba_mleb_entry *entry;
+//		struct ubi_consolidated_peb *cpeb;
+//
+//		list_for_each_entry(entry, list, node) {
+//			ubi_assert(entry->consolidated);
+//
+//			cpeb = entry->cpeb;
+//			for (j = 0; j < ubi->max_lebs_per_peb; j++) {
+//				if (cpeb->lnums[j] == ldesc->lnum &&
+//				    cpeb->pnum != ldesc->pnum)
+//					count++;
+//			}
+//		}
+//	}
+//
+//	return count;
+//}
+//
+//static int cond_add_leb_to_gc(struct ubi_volume *vol, int lnum)
+//{
+//	struct ubi_device *ubi = vol->ubi;
+//	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
+//	struct ubi_eba_mleb_entry *entry = &tbl->entries[lnum];
+//	struct ubi_consolidated_peb *cpeb = entry->cpeb;
+//	struct ubi_eba_mleb_gc_entry *gce;
+//	int i;
+//
+//	if (!entry->invalid || entry->nzombies)
+//		return 0;
+//
+//	if (entry->consolidated) {
+//		struct ubi_eba_mleb_entry *tmp;
+//
+//		for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+//			if (cpeb->lnums[i] == lnum)
+//				continue;
+//
+//			tmp = &tbl->entries[cpeb->lnums[i]];
+//
+//			/* We still have a valid reference to this PEB. */
+//			if (!tmp->invalid && tmp->consolidated &&
+//			    tmp->cpeb == cpeb)
+//				return 0;
+//		}
+//	}
+//
+//	gce = kmalloc(sizeof(*gce), GFP_NOFS);
+//	if (!gce)
+//		return -ENOMEM;
+//
+//	gce->pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+//	if (!gce->pdesc) {
+//		kfree(gce);
+//		return -ENOMEM;
+//	}
+//
+//	if (entry->consolidated) {
+//		for (i = 0; i < ubi->max_lebs_per_peb; i++)
+//			gce->pdesc->lnums[i] = cpeb->lnums[i];
+//
+//		gce->pdesc->pnum = cpeb->pnum;
+//		entry->consolidated = 0;
+//		kfree(cpeb);
+//	} else {
+//		gce->pdesc->lnums[0] = lnum;
+//		gce->pdesc->pnum = entry->pnum;
+//	}
+//
+//	entry->pnum = UBI_LEB_UNMAPPED;
+//	list_add_tail(&gce->node, &tbl->gc);
+//
+//	return 0;
+//}
+
+static void cond_add_to_gc(struct ubi_volume *vol,
+			   struct ubi_eba_mleb_entry *entry)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
+	struct ubi_consolidated_peb *cpeb = entry->cpeb;
+	int i;
+
+	if (!entry->invalid || entry->nzombies)
+		return;
+
+	if (entry->consolidated) {
+		struct ubi_eba_mleb_entry *tmp;
+		int lnum = mleb_entry_to_lnum(tbl, entry);
+
+		for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+			if (cpeb->lnums[i] == lnum)
+				continue;
+
+			tmp = &tbl->entries[cpeb->lnums[i]];
+
+			/* We still have a valid reference to this PEB. */
+			if (!tmp->invalid && tmp->consolidated &&
+			    tmp->cpeb == cpeb)
+				return;
+		}
+	}
+
+	mleb_list_add_tail(&tbl->gc, entry);
+}
+
+struct ubi_peb_desc *remove_from_gc(struct ubi_volume *vol,
+				    struct ubi_eba_mleb_entry *entry)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
+	struct ubi_peb_desc *pdesc;
+
+	ubi_assert(entry->invalid);
+
+	if (list_empty(&entry->node))
+		return NULL;
+
+	pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+	if (!pdesc)
+		return ERR_PTR(-ENOMEM);
+
+	mleb_list_del(&tbl->gc, entry);
+
+	if (entry->consolidated) {
+		struct ubi_consolidated_peb *cpeb = entry->cpeb;
+		int i;
+
+		for (i = 0; i < ubi->max_lebs_per_peb; i++)
+			pdesc->lnums[i] = cpeb->lnums[i];
+
+		pdesc->pnum = cpeb->pnum;
+		entry->consolidated = 0;
+		kfree(cpeb);
+	} else {
+		pdesc->lnums[0] = mleb_entry_to_lnum(tbl, entry);
+		pdesc->pnum = entry->pnum;
+	}
+
+	return pdesc;
 }
 
 static struct ubi_peb_desc *
@@ -328,15 +494,20 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 	struct ubi_eba_mleb_entry *entry = NULL;
 	struct ubi_peb_desc *pdesc = NULL;
 	struct ubi_eba_mleb_list *src, *dirty = NULL;
-	int i, refcount = 0;
+	int i, refcount = 0, nzombies;
 	bool found = false;
 
-	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
-		ubi_assert(lnum >= 0);
+	ubi_assert(lnum >= 0);
 
+	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
 		if (cpeb->lnums[i] >= vol->reserved_lebs ||
 		    !tbl->entries[cpeb->lnums[i]].consolidated ||
 		    tbl->entries[cpeb->lnums[i]].cpeb != cpeb)
+			continue;
+
+		nzombies += tbl->entries[cpeb->lnums[i]].nzombies;
+
+		if (tbl->entries[cpeb->lnums[i]].invalid)
 			continue;
 
 		if (cpeb->lnums[i] == lnum)
@@ -367,8 +538,11 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 
 	mleb_list_del(src, entry);
 
-	/* We are the last user of this PEB, free it. */
-	if (refcount == 1) {
+	/*
+	 * We are the last user and there's no zombie LEBs hidden by this PEB,
+	 * free it.
+	 */
+	if (refcount == 1 && !nzombies) {
 		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
 		if (!pdesc)
 			return ERR_PTR(-ENOMEM);
@@ -376,8 +550,17 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 		pdesc->pnum = cpeb->pnum;
 		pdesc->vol_id = vol->vol_id;
 
-		for (i = 0; i < ubi->max_lebs_per_peb; i++)
-			pdesc->lnums[i] = cpeb->lnums[i];
+		for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+			entry = &tbl->entries[cpeb->lnums[i]];
+
+			if (cpeb->lnums[i] >= vol->reserved_lebs ||
+			    (entry->consolidated && entry->cpeb == cpeb))
+				continue;
+
+			entry->nzombies--;
+
+			cond_add_to_gc(vol, entry);
+		}
 	}
 
 	/*
@@ -419,31 +602,37 @@ static struct ubi_peb_desc *invalidate_entry_unlocked(struct ubi_volume *vol,
 
 	entry = &tbl->entries[lnum];
 
-	if (entry->consolidated) {
+	if (entry->invalid) {
+		pdesc = remove_from_gc(vol, entry);
+	} else if (entry->consolidated) {
 		pdesc = ubi_eba_invalidate_cpeb_entry(vol, entry->cpeb, lnum);
 		if (IS_ERR(pdesc))
 			return pdesc;
-
-		entry->consolidated = false;
-	} else if (entry->pnum >= 0) {
+	} else {
 		/* The LEB is not consolidated. */
-		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
-		if (!pdesc) {
-			pdesc = ERR_PTR(-ENOMEM);
-			return pdesc;
-		}
+		ubi_assert(entry->pnum >= 0);
 
-		pdesc->lnums[0] = lnum;
-		pdesc->vol_id = vol->vol_id;
-		pdesc->pnum = entry->pnum;
+		/*
+		 * Make sure we are not hiding zombies before releasing the
+		 * PEB.
+		 */
+		if (!entry->nzombies) {
+			pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
+			if (!pdesc) {
+				pdesc = ERR_PTR(-ENOMEM);
+				return pdesc;
+			}
+
+			pdesc->lnums[0] = lnum;
+			pdesc->vol_id = vol->vol_id;
+			pdesc->pnum = entry->pnum;
+		}
 
 		tbl->consolidable_lebs--;
 		mleb_list_del(&tbl->open, entry);
-	} else {
-		return pdesc;
 	}
 
-	entry->pnum = UBI_LEB_UNMAPPED;
+	entry->invalid = true;
 	pr_info("%s:%i invalidate LEB %d:%d\n",
 		__func__, __LINE__, vol->vol_id, lnum);
 
@@ -470,6 +659,47 @@ ubi_eba_mleb_invalidate_entry(struct ubi_volume *vol, int lnum)
 	return pdesc;
 }
 
+static int ubi_eba_mleb_gc_pebs(struct ubi_volume *vol)
+{
+	struct ubi_device *ubi = vol->ubi;
+	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
+	struct ubi_eba_mleb_entry *entry;
+	struct ubi_peb_desc *pdesc;
+	int err = 0;
+
+	mutex_lock(&tbl->lock);
+	while (mleb_list_count(&tbl->gc)) {
+		entry = list_first_entry(&tbl->gc.list,
+					 struct ubi_eba_mleb_entry, node);
+		pdesc = remove_from_gc(vol, entry);
+		if (IS_ERR(pdesc)) {
+			err = PTR_ERR(pdesc);
+			break;
+		}
+
+		tbl->free_pebs++;
+
+		/*
+		 * Release EBA table lock when calling ubi_wl_put_peb() to
+		 * avoid contention.
+		 */
+		mutex_unlock(&tbl->lock);
+		pr_info("%s:%i\n", __func__, __LINE__);
+		err = ubi_wl_put_peb(ubi, pdesc, 0);
+		if (err)
+			return err;
+
+		mutex_lock(&tbl->lock);
+	}
+
+	if (tbl->free_pebs > 0)
+		wake_up(&tbl->wait_peb);
+
+	mutex_unlock(&tbl->lock);
+
+	return err;
+}
+
 static struct ubi_peb_desc *ubi_eba_mleb_update_entry(struct ubi_volume *vol,
 					const struct ubi_eba_leb_desc *ldesc)
 {
@@ -485,15 +715,28 @@ static struct ubi_peb_desc *ubi_eba_mleb_update_entry(struct ubi_volume *vol,
 	ubi_conso_cond_cancel(vol, ldesc->lnum);
 
 	mutex_lock(&tbl->lock);
-	if (entry->consolidated) {
+	if (entry->invalid) {
+		/* The LEB may be in the GC list. */
+		pdesc = remove_from_gc(vol, entry);
+
+		tbl->consolidable_lebs++;
+	} else if (entry->consolidated) {
 		pdesc = ubi_eba_invalidate_cpeb_entry(vol, entry->cpeb,
 						      ldesc->lnum);
 		if (IS_ERR(pdesc))
 			goto out;
 
+		/*
+		 * The PEB was not released, this means we have a zombie LEB in
+		 * the wild.
+		 */
+		if (!pdesc)
+			entry->nzombies++;
+
 		tbl->consolidable_lebs++;
-		entry->consolidated = false;
-	} else if (entry->pnum >= 0) {
+	} else {
+		ubi_assert(entry->pnum >= 0);
+
 		pdesc = ubi_alloc_pdesc(ubi, GFP_NOFS);
 		if (!pdesc) {
 			pdesc = ERR_PTR(-ENOMEM);
@@ -505,10 +748,10 @@ static struct ubi_peb_desc *ubi_eba_mleb_update_entry(struct ubi_volume *vol,
 		pdesc->vol_id = vol->vol_id;
 
 		mleb_list_del(&tbl->open, entry);
-	} else {
-		tbl->consolidable_lebs++;
 	}
 
+	entry->invalid = false;
+	entry->consolidated = false;
 	entry->pnum = ldesc->pnum;
 
 	/*
@@ -642,12 +885,15 @@ static void ubi_eba_mleb_update_consolidated_lebs(struct ubi_volume *vol,
 
 		entry = &tbl->entries[lnum];
 
+		ubi_assert(!entry->invalid);
+
 		/* First invalidate the previous entry. */
 		pdescs[i] = invalidate_entry_unlocked(vol, lnum);
 
 		pr_info("%s:%i LEB %d:%d consolidated in PEB %d +%d (coming from PEB %d +%d)\n",
 			__func__, __LINE__, vol->vol_id, lnum, cpeb->pnum, i, ldesc.pnum, ldesc.lpos);
 		/* Now update it with the new definition. */
+		entry->invalid = false;
 		entry->consolidated = true;
 		entry->cpeb = cpeb;
 
@@ -749,6 +995,7 @@ static int ubi_eba_mleb_init_entry(struct ubi_volume *vol,
 		entry->cpeb = cpeb;
 		pr_info("%s:%i \n", __func__, __LINE__);
 		entry->consolidated = true;
+		entry->invalid = false;
 
 		pr_info("%s:%i \n", __func__, __LINE__);
 		/*
@@ -813,6 +1060,7 @@ static int ubi_eba_mleb_init_entry(struct ubi_volume *vol,
 	} else {
 		pr_info("%s:%i \n", __func__, __LINE__);
 		entry->pnum = aleb->peb->sleb.pnum;
+		entry->invalid = false;
 
 		pr_info("%s:%i \n", __func__, __LINE__);
 		/*
@@ -1324,6 +1572,7 @@ const struct ubi_eba_table_ops ubi_eba_mleb_ops = {
 	.get_ldesc = ubi_eba_mleb_get_ldesc,
 	.invalidate_entry = ubi_eba_mleb_invalidate_entry,
 	.update_entry = ubi_eba_mleb_update_entry,
+	.gc_pebs = ubi_eba_mleb_gc_pebs,
 	.init_entry = ubi_eba_mleb_init_entry,
 	.prepare_leb_write = ubi_eba_mleb_prepare_leb_write,
 	.copy_peb = ubi_eba_mleb_copy_peb,

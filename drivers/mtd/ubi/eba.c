@@ -576,6 +576,13 @@ static int ubi_eba_init_entry(struct ubi_volume *vol,
 	return vol->eba_tbl_ops->init_entry(vol, aleb);
 }
 
+int ubi_eba_gc_pebs(struct ubi_volume *vol)
+{
+	if (vol->eba_tbl_ops->gc_pebs)
+		return vol->eba_tbl_ops->gc_pebs(vol);
+
+	return 0;
+}
 
 int ubi_eba_select_leb_for_conso(struct ubi_volume *vol,
 				 const struct ubi_consolidated_peb *cpeb,
@@ -638,6 +645,9 @@ int ubi_eba_unmap_leb(struct ubi_device *ubi, struct ubi_volume *vol,
 	}
 
 	leb_write_unlock(vol, lnum);
+
+	if (!err)
+		err = ubi_eba_gc_pebs(vol);
 
 	return err;
 }
@@ -1070,6 +1080,8 @@ out_put:
 	if (pdesc)
 		ubi_wl_put_peb(ubi, pdesc, 1);
 
+	ubi_eba_gc_pebs(vol);
+
 	return err;
 }
 
@@ -1196,6 +1208,8 @@ out_put:
 
 	if (pdesc)
 		ubi_wl_put_peb(ubi, pdesc, err ? 1 : 0);
+
+	ubi_eba_gc_pebs(vol);
 
 	return err;
 }

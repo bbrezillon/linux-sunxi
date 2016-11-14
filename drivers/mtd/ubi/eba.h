@@ -53,6 +53,7 @@ struct ubi_eba_table_ops {
 						 int lnum);
 	struct ubi_peb_desc *(*update_entry)(struct ubi_volume *vol,
 				     const struct ubi_eba_leb_desc *ldesc);
+	int (*gc_pebs)(struct ubi_volume *vol);
 	int (*init_entry)(struct ubi_volume *vol, struct ubi_ainf_leb *aleb);
 	int (*prepare_leb_write)(struct ubi_volume *vol,
 				 struct ubi_eba_leb_desc *ldesc, int offset);

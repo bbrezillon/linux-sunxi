@@ -318,6 +318,8 @@ static int finish_conso(struct ubi_volume *vol)
 			ubi_wl_put_peb(ubi, pdescs[i], 0);
 	}
 
+	ubi_eba_gc_pebs(vol);
+
 	return 0;
 
 err_unlock:
