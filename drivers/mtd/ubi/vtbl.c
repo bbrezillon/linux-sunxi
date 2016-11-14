@@ -344,7 +344,8 @@ retry:
 	vid_hdr->data_size = vid_hdr->used_ebs =
 			     vid_hdr->data_pad = cpu_to_be32(0);
 	vid_hdr->lnum = cpu_to_be32(copy);
-	vid_hdr->sqnum = cpu_to_be64(++ai->max_sqnum);
+	new_apeb->sqnum = ++ai->max_sqnum;
+	vid_hdr->sqnum = cpu_to_be64(new_apeb->sqnum);
 
 	/* The EC header is already there, write the VID header */
 	err = ubi_io_write_vid_hdr(ubi, pnum, vidb);

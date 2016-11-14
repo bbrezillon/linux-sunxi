@@ -273,6 +273,9 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	if (!vol)
 		return -ENOMEM;
 
+	mutex_init(&vol->ltree_lock);
+	vol->ltree = RB_ROOT;
+
 	vol->ubi = ubi;
 
 	mutex_lock(&ubi->volumes_lock);

@@ -1733,8 +1733,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		e->ec = apeb->ec;
 		ubi->lookuptbl[e->pnum] = e;
 
-		pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
-
 		pdesc = ubi_apeb_to_pdesc(ubi, apeb);
 		if (!pdesc)
 			goto out_free;
@@ -1759,7 +1757,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		e->ec = apeb->ec;
 		ubi_assert(e->ec >= 0);
 
-		pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
 		wl_tree_add(e, &ubi->free);
 		ubi->free_count++;
 
@@ -1767,8 +1764,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 
 		found_pebs++;
 	}
-
-	pr_info("%s:%i \n", __func__, __LINE__);
 
 	list_for_each_entry(apeb, &ai->used, node) {
 		e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
@@ -1779,14 +1774,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		e->ec = apeb->ec;
 		ubi->lookuptbl[e->pnum] = e;
 
-		pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
 		if (!apeb->scrub) {
-			pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
 			dbg_wl("add PEB %d EC %d to the used tree",
 			       e->pnum, e->ec);
 			wl_tree_add(e, &ubi->used);
 		} else {
-			pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
 			dbg_wl("add PEB %d EC %d to the scrub tree",
 			       e->pnum, e->ec);
 			wl_tree_add(e, &ubi->scrub);
@@ -1795,7 +1787,6 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		found_pebs++;
 	}
 
-	pr_info("%s:%i \n", __func__, __LINE__);
 	list_for_each_entry(apeb, &ai->fastmap, node) {
 		int pnum = ubi_ainf_get_pnum(apeb);
 
@@ -1836,14 +1827,11 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			}
 		}
 
-		pr_info("%s:%i pnum %d\n", __func__, __LINE__, e->pnum);
-
 		found_pebs++;
 	}
 
 	dbg_wl("found %i PEBs", found_pebs);
 
-	pr_info("%s:%i ubi->good_peb_count %d found_pebs %d\n", __func__, __LINE__, ubi->good_peb_count, found_pebs);
 	ubi_assert(ubi->good_peb_count == found_pebs);
 
 	reserved_pebs = WL_RESERVED_PEBS;

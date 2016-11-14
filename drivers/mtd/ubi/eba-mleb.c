@@ -494,7 +494,7 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 	struct ubi_eba_mleb_entry *entry = NULL;
 	struct ubi_peb_desc *pdesc = NULL;
 	struct ubi_eba_mleb_list *src, *dirty = NULL;
-	int i, refcount = 0, nzombies;
+	int i, refcount = 0, nzombies = 0;
 	bool found = false;
 
 	ubi_assert(lnum >= 0);
@@ -718,6 +718,13 @@ static struct ubi_peb_desc *ubi_eba_mleb_update_entry(struct ubi_volume *vol,
 	if (entry->invalid) {
 		/* The LEB may be in the GC list. */
 		pdesc = remove_from_gc(vol, entry);
+
+		/*
+		 * We are about to hide an invalid LEB, increase the zombie
+		 * counter.
+		 */
+		if (entry->consolidated)
+			entry->nzombies++;
 
 		tbl->consolidable_lebs++;
 	} else if (entry->consolidated) {
@@ -1055,6 +1062,15 @@ static int ubi_eba_mleb_init_entry(struct ubi_volume *vol,
 			 * the apeb object is released.
 			 */
 			aleb->peb->mleb.cpeb = NULL;
+
+			for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+				if (cpeb->lnums[i] >= vol->reserved_lebs ||
+				    (tbl->entries[cpeb->lnums[i]].consolidated &&
+				     tbl->entries[cpeb->lnums[i]].cpeb == cpeb))
+					continue;
+
+				tbl->entries[cpeb->lnums[i]].nzombies++;
+			}
 		}
 		pr_info("%s:%i \n", __func__, __LINE__);
 	} else {
@@ -1105,18 +1121,23 @@ static int ubi_eba_mleb_prepare_leb_write(struct ubi_volume *vol,
 	mutex_lock(&ubi->buf_mutex);
 	ubi_init_vid_buf(ubi, &vidb, ubi->peb_buf + ubi->vid_hdr_offset);
 	vid_hdr = ubi_get_vid_hdr(&vidb);
-	err = ubi_eba_read_leb_data(vol, ldesc, buf, 0, len);
-	if (err && err != UBI_IO_BITFLIPS)
-		goto out_unlock_buf;
 
 	/* Initialize the VID header */
 	ubi_eba_vid_hdr_fill_vol_info(vol, vid_hdr);
-	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
 	vid_hdr->lnum = cpu_to_be32(lnum);
-	crc = crc32(UBI_CRC32_INIT, buf, len);
-	vid_hdr->data_size = cpu_to_be32(len);
-	vid_hdr->copy_flag = 1;
-	vid_hdr->data_crc = cpu_to_be32(crc);
+
+	if (len) {
+		err = ubi_eba_read_leb_data(vol, ldesc, buf, 0, len);
+		if (err && err != UBI_IO_BITFLIPS)
+			goto out_unlock_buf;
+
+		crc = crc32(UBI_CRC32_INIT, buf, len);
+		vid_hdr->data_size = cpu_to_be32(len);
+		vid_hdr->copy_flag = 1;
+		vid_hdr->data_crc = cpu_to_be32(crc);
+	}
+
+	vid_hdr->sqnum = cpu_to_be64(ubi_next_sqnum(ubi));
 
 	for (tries = 0; tries <= UBI_IO_RETRIES; tries++) {
 		err = ubi_eba_try_write_vid_and_data(vol, ldesc->lnum, &vidb,
@@ -1166,6 +1187,8 @@ ubi_eba_mleb_create_table(struct ubi_volume *vol, int nentries)
 	if (!tbl->entries)
 		goto err;
 
+	mleb_list_init(&tbl->gc);
+	mleb_list_init(&tbl->corrupted);
 	mleb_list_init(&tbl->open);
 	mleb_list_init(&tbl->closed.clean);
 
