@@ -692,7 +692,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		  struct ubi_ainf_peb *apeb,
 		  const struct ubi_vid_hdr *vid_hdr)
 {
-	int err, vol_id, vol_mode, lnum, pnum;
+	int err, vol_id, vol_mode, lnum, pnum, lpos;
 	unsigned long long sqnum;
 	struct ubi_ainf_volume *av;
 	struct ubi_ainf_leb *aleb;
@@ -703,6 +703,9 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	lnum = be32_to_cpu(vid_hdr->lnum);
 	sqnum = be64_to_cpu(vid_hdr->sqnum);
 	pnum = ubi_ainf_get_pnum(apeb);
+	lpos = vid_hdr->lpos;
+
+	ubi_assert(sqnum == apeb->sqnum + lpos);
 
 	dbg_bld("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d",
 		pnum, vol_id, lnum, apeb->ec, sqnum, apeb->scrub);
@@ -1133,7 +1136,7 @@ static struct ubi_ainf_peb *vidb_to_apeb(struct ubi_device *ubi,
 
 	apeb->scrub = !!bitflips;
 	apeb->vol_id = be32_to_cpu(vidh->vol_id);
-	apeb->sqnum = be32_to_cpu(vidh->sqnum);
+	apeb->sqnum = be64_to_cpu(vidh->sqnum);
 
 	if (ubi_get_nhdrs(vidb) == 1) {
 		apeb->sleb.lnum = be32_to_cpu(vidh->lnum);
