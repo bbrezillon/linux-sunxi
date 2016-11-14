@@ -275,6 +275,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 
 	mutex_init(&vol->ltree_lock);
 	vol->ltree = RB_ROOT;
+	vol->direct_writes = true;
 
 	vol->ubi = ubi;
 

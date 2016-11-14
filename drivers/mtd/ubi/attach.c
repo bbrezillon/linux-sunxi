@@ -707,25 +707,22 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 	ubi_assert(sqnum == apeb->sqnum + lpos);
 
+	pr_info("PEB %d, LEB %d:%d, sqnum %llu, lpos %d sqnum %llu\n",
+		pnum, vol_id, lnum, sqnum, lpos, apeb->sqnum);
+
 	dbg_bld("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d",
 		pnum, vol_id, lnum, apeb->ec, sqnum, apeb->scrub);
 
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
+	pr_info("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d\n",
+		pnum, vol_id, lnum, apeb->ec, sqnum, apeb->scrub);
 
 	av = add_volume(ai, vol_id, pnum, vid_hdr);
 	if (IS_ERR(av))
 		return PTR_ERR(av);
 
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
-
 	/* Assign the volume mode if it's just been created. */
 	if (av->vol_mode < 0)
 		av->vol_mode = vol_mode;
-
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
 
 	/* All VID headers in a given volume should expose the same mode. */
 	if (vol_mode != av->vol_mode) {
@@ -734,14 +731,8 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return -EINVAL;
 	}
 
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
-
 	if (ai->max_sqnum < sqnum)
 		ai->max_sqnum = sqnum;
-
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
 
 	/*
 	 * Walk the RB-tree of logical eraseblocks of volume @vol_id to look
@@ -769,6 +760,9 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		dbg_bld("this LEB already exists: PEB %d, sqnum %llu, EC %d",
 			ubi_ainf_get_pnum(aleb->peb), ubi_ainf_leb_sqnum(aleb),
 			aleb->peb->ec);
+		pr_info("this LEB already exists: PEB %d, sqnum %llu, EC %d\n",
+			ubi_ainf_get_pnum(aleb->peb), ubi_ainf_leb_sqnum(aleb),
+			aleb->peb->ec);
 
 		/*
 		 * Make sure that the logical eraseblocks have different
@@ -791,9 +785,6 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			return -EINVAL;
 		}
 
-		pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-			apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
-
 		/*
 		 * Now we have to drop the older one and preserve the newer
 		 * one.
@@ -801,9 +792,6 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		cmp_res = ubi_compare_lebs(ubi, aleb, pnum, vid_hdr);
 		if (cmp_res < 0)
 			return cmp_res;
-
-		pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-			apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
 
 		if (cmp_res & 1) {
 			/*
@@ -814,20 +802,14 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			if (err)
 				return err;
 
-			pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-				apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
-
 			if (!ubi_ainf_dec_apeb_refcnt(aleb->peb)) {
 				list_del(&aleb->peb->node);
 				add_apeb_to_list(ai, aleb->peb, cmp_res & 4,
 						 &ai->erase);
 			}
 
-			if (list_empty(&apeb->node)) {
-				pr_info("%s:%i PEB %d used\n", __func__, __LINE__,
-					apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
+			if (list_empty(&apeb->node))
 				list_add_tail(&apeb->node, &ai->used);
-			}
 
 			if ((cmp_res & 2))
 				apeb->scrub = true;
@@ -853,9 +835,6 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		}
 	}
 
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__,
-		apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
-
 	/*
 	 * We've met this logical eraseblock for the first time, add it to the
 	 * attaching information.
@@ -869,11 +848,8 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	if (!aleb)
 		return -ENOMEM;
 
-	if (list_empty(&apeb->node)) {
-		pr_info("%s:%i PEB %d used\n", __func__, __LINE__,
-			apeb->consolidated ? apeb->mleb.cpeb->pnum : apeb->sleb.pnum);
+	if (list_empty(&apeb->node))
 		list_add_tail(&apeb->node, &ai->used);
-	}
 
 	if (av->highest_lnum <= lnum) {
 		av->highest_lnum = lnum;
@@ -1279,10 +1255,8 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 	/* OK, we've done with the EC header, let's look at the VID header */
 
 	err = ubi_io_read_vid_hdr(ubi, pnum, vidb, 0);
-	if (err < 0) {
-		pr_info("%s:%i PEB %d err = %d\n", __func__, __LINE__, pnum, err);
+	if (err < 0)
 		return err;
-	}
 
 	switch (err) {
 	case 0:
@@ -1689,7 +1663,6 @@ static int scan_all(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 		dbg_gen("process PEB %d", pnum);
 		err = scan_peb(ubi, ai, pnum, false);
-		pr_info("%s:%i PEB %d err = %d\n", __func__, __LINE__, pnum, err);
 		if (err < 0)
 			goto out_vidh;
 	}
@@ -1812,19 +1785,15 @@ static int scan_fast(struct ubi_device *ubi, struct ubi_attach_info **ai)
 	if (!scan_ai->vidb)
 		goto out_ech;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	for (pnum = 0; pnum < UBI_FM_MAX_START; pnum++) {
 		cond_resched();
 
 		dbg_gen("process PEB %d", pnum);
-		pr_info("%s:%i\n", __func__, __LINE__);
 		err = scan_peb(ubi, scan_ai, pnum, true);
-		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 		if (err < 0)
 			goto out_vidh;
 	}
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi_free_vid_buf(scan_ai->vidb);
 	kfree(scan_ai->ech);
 
@@ -1834,7 +1803,6 @@ static int scan_fast(struct ubi_device *ubi, struct ubi_attach_info **ai)
 		err = ubi_scan_fastmap(ubi, *ai, scan_ai);
 
 	if (err) {
-		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 		/*
 		 * Didn't attach via fastmap, do a full scan but reuse what
 		 * we've aready scanned.
@@ -1876,21 +1844,17 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 		return -ENOMEM;
 
 #ifdef CONFIG_MTD_UBI_FASTMAP
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* On small flash devices we disable fastmap in any case. */
 	if ((int)mtd_div_by_eb(ubi->mtd->size, ubi->mtd) <= UBI_FM_MAX_START) {
 		ubi->fm_disabled = 1;
 		force_scan = 1;
 	}
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	if (force_scan)
 		err = scan_all(ubi, ai, 0);
 	else {
-		pr_info("%s:%i\n", __func__, __LINE__);
 		err = scan_fast(ubi, &ai);
 		if (err > 0 || mtd_is_eccerr(err)) {
-			pr_info("%s:%i\n", __func__, __LINE__);
 			if (err != UBI_NO_FASTMAP) {
 				destroy_ai(ai);
 				ai = alloc_ai();
@@ -1898,10 +1862,8 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 					return -ENOMEM;
 
 				err = scan_all(ubi, ai, 0);
-				pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 			} else {
 				err = scan_all(ubi, ai, UBI_FM_MAX_START);
-				pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 			}
 		}
 	}
@@ -1911,7 +1873,6 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	if (err)
 		goto out_ai;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	ubi->bad_peb_count = ai->bad_peb_count;
 	ubi->good_peb_count = ubi->peb_count - ubi->bad_peb_count;
 	ubi->corr_peb_count = ai->corr_peb_count;
@@ -1919,27 +1880,22 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	ubi->mean_ec = ai->mean_ec;
 	dbg_gen("max. sequence number:       %llu", ai->max_sqnum);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_read_volume_table(ubi, ai);
 	if (err)
 		goto out_ai;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_wl_init(ubi, ai);
 	if (err)
 		goto out_vtbl;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	err = ubi_eba_init(ubi, ai);
 	if (err)
 		goto out_wl;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 #ifdef CONFIG_MTD_UBI_FASTMAP
 	if (ubi->fm && ubi_dbg_chk_fastmap(ubi)) {
 		struct ubi_attach_info *scan_ai;
 
-		pr_info("%s:%i\n", __func__, __LINE__);
 		scan_ai = alloc_ai();
 		if (!scan_ai) {
 			err = -ENOMEM;
@@ -1960,7 +1916,6 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	}
 #endif
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	destroy_ai(ai);
 	return 0;
 

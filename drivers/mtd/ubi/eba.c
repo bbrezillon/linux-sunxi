@@ -750,9 +750,6 @@ int ubi_eba_write_leb_data(struct ubi_volume *vol,
 
 	offset += loffset;
 
-	pr_info("%s:%i LEB %d:%d +%08x PEB %d +%08x iomode %d\n",
-		__func__, __LINE__, vol->vol_id, ldesc->lnum,
-		loffset, ldesc->pnum, offset, io_mode);
 	return ubi_io_write_data(ubi, buf, ldesc->pnum, offset, len, io_mode);
 }
 
@@ -1776,6 +1773,7 @@ int ubi_eba_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 
 		cond_resched();
 
+		vol->direct_writes = true;
 		mutex_init(&vol->ltree_lock);
 		vol->ltree = RB_ROOT;
 

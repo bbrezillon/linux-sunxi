@@ -150,7 +150,6 @@ static int start_conso(struct ubi_volume *vol)
 
 	mutex_unlock(&conso->lock);
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	return 0;
 
 err_unlock:
@@ -194,13 +193,10 @@ static int continue_conso(struct ubi_volume *vol)
 	 * consolidation.
 	 */
 	err = ubi_eba_leb_read_trylock(vol, conso->src.ldesc.lnum);
-	if (err > 0) {
-		pr_info("%s:%i try lock LEB %d\n", __func__, __LINE__, conso->src.ldesc.lnum);
+	if (err > 0)
 		return -EBUSY;
-	} else if (err < 0) {
-		pr_info("%s:%i\n", __func__, __LINE__);
+	else if (err < 0)
 		return err;
-	}
 
 	/*
 	 * Only copy one page here.
@@ -248,10 +244,8 @@ static int finish_conso(struct ubi_volume *vol)
 	if (!pdescs)
 		return -ENOMEM;
 
-	pr_info("%s:%i\n", __func__, __LINE__);
 	/* Try to lock all consolidated LEBs in write mode. */
 	for (locked = 0; locked < nhdrs; locked++) {
-		pr_info("%s:%i lock LEB %d lpos %d\n", __func__, __LINE__, cpeb->lnums[locked], locked);
 		err = ubi_eba_leb_write_trylock(vol, cpeb->lnums[locked]);
 		if (err > 0)
 			err = -EAGAIN;
@@ -274,7 +268,6 @@ static int finish_conso(struct ubi_volume *vol)
 	for (offset = (ubi->max_lebs_per_peb * vol->leb_size) + ubi->leb_start;
 	     offset < ubi->peb_size - ubi->min_io_size;
 	     offset += ubi->min_io_size) {
-		pr_info("%s:%i pad PEB %d +%08x\n", __func__, __LINE__, cpeb->pnum, offset);
 		err = ubi_io_write(ubi, conso->buf, cpeb->pnum, offset,
 				   ubi->min_io_size, UBI_IO_MODE_NORMAL);
 		if (err)
@@ -296,7 +289,6 @@ static int finish_conso(struct ubi_volume *vol)
 		ubi_io_prepare_vid_hdr(ubi, &vidh[i]);
 	}
 
-	pr_info("%s:%i write VID hdrs on PEB %d +%08x\n", __func__, __LINE__, cpeb->pnum, offset);
 	err = ubi_io_write(ubi, conso->buf, cpeb->pnum, offset,
 			   ubi->min_io_size, UBI_IO_MODE_NORMAL);
 	if (err)
@@ -308,10 +300,8 @@ static int finish_conso(struct ubi_volume *vol)
 	reset_conso(vol);
 	mutex_unlock(&conso->lock);
 
-	for (i = 0; i < nhdrs; i++) {
-		pr_info("%s:%i unlock LEB %d lpos %d\n", __func__, __LINE__, cpeb->lnums[i], i);
+	for (i = 0; i < nhdrs; i++)
 		ubi_eba_leb_write_unlock(vol, cpeb->lnums[i]);
-	}
 
 	for (i = 0; i < nhdrs; i++) {
 		if (pdescs[i])
@@ -323,10 +313,8 @@ static int finish_conso(struct ubi_volume *vol)
 	return 0;
 
 err_unlock:
-	for (locked--; locked >= 0; locked--) {
-		pr_info("%s:%i unlock LEB %d lpos %d\n", __func__, __LINE__, cpeb->lnums[locked], locked);
+	for (locked--; locked >= 0; locked--)
 		ubi_eba_leb_write_unlock(vol, cpeb->lnums[locked]);
-	}
 
 	kfree(pdescs);
 
@@ -361,7 +349,6 @@ static int conso_step(struct ubi_volume *vol)
 	/* Check if consolidation has been cancelled. */
 	if (conso_cancelled(vol)) {
 		err = -EBUSY;
-		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 		goto cancel;
 	}
 
@@ -372,15 +359,12 @@ static int conso_step(struct ubi_volume *vol)
 		err = continue_conso(vol);
 	}
 
-	if (err && err != -EAGAIN) {
-		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
+	if (err && err != -EAGAIN)
 		goto cancel;
-	}
 
 	/* Check again if consolidation has been cancelled. */
 	if (conso_cancelled(vol)) {
 		err = -EBUSY;
-		pr_info("%s:%i err = %d\n", __func__, __LINE__, err);
 		goto cancel;
 	}
 
