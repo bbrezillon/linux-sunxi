@@ -93,6 +93,7 @@ static void cancel_conso(struct ubi_volume *vol)
 		ubi_wl_put_peb(vol->ubi, pdesc, 0);
 	}
 
+	pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, cpeb);
 	kfree(cpeb);
 }
 

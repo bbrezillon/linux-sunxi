@@ -1184,11 +1184,8 @@ int ubi_eba_try_write_vid_and_data(struct ubi_volume *vol, int lnum,
 		}
 	}
 
-	if (!err) {
+	if (!err)
 		pdesc = ubi_eba_update_entry(vol, &nldesc);
-		if (pdesc)
-			ubi_eba_release_peb(vol);
-	}
 
 out_put:
 	up_read(&ubi->eba_sem);

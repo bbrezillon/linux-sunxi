@@ -215,8 +215,10 @@ struct ubi_ainf_peb *ubi_alloc_apeb(struct ubi_attach_info *ai, int pnum,
  */
 void ubi_free_apeb(struct ubi_attach_info *ai, struct ubi_ainf_peb *apeb)
 {
-	if (apeb->consolidated && apeb->mleb.cpeb)
+	if (apeb->consolidated && apeb->mleb.cpeb) {
+		pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, apeb->mleb.cpeb);
 		kfree(apeb->mleb.cpeb);
+	}
 
 	kmem_cache_free(ai->apeb_slab_cache, apeb);
 }
@@ -1002,6 +1004,7 @@ struct ubi_ainf_peb *ubi_early_get_peb(struct ubi_device *ubi,
 
 		/* Free the cpeb object if the PEB was consolidated. */
 		if (apeb->consolidated) {
+			pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, apeb->mleb.cpeb);
 			kfree(apeb->mleb.cpeb);
 			apeb->consolidated = 0;
 		}
@@ -1127,6 +1130,7 @@ static struct ubi_ainf_peb *vidb_to_apeb(struct ubi_device *ubi,
 	}
 
 	apeb->consolidated = 1;
+	pr_info("%s:%i init cpeb = %p\n", __func__, __LINE__, cpeb);
 	apeb->mleb.cpeb = cpeb;
 	apeb->mleb.refcnt = 0;
 

@@ -828,6 +828,7 @@ static int ubi_attach_fastmap(struct ubi_device *ubi,
 			cpeb->lnums[lpos] = j;
 			apeb->consolidated = 1;
 			apeb->mleb.cpeb = cpeb;
+			pr_info("%s:%i init cpeb = %p\n", __func__, __LINE__, apeb->mleb.cpeb);
 			apeb->mleb.refcnt = 1;
 		}
 	}

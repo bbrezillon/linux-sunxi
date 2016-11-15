@@ -242,15 +242,19 @@ int ubifs_recover_master_node(struct ubifs_info *c)
 
 	dbg_rcvry("recovery");
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	err = get_master_node(c, UBIFS_MST_LNUM, &buf1, &mst1, &cor1);
 	if (err)
 		goto out_free;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	err = get_master_node(c, UBIFS_MST_LNUM + 1, &buf2, &mst2, &cor2);
 	if (err)
 		goto out_free;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (mst1) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		offs1 = (void *)mst1 - buf1;
 		if ((le32_to_cpu(mst1->flags) & UBIFS_MST_RCVRY) &&
 		    (offs1 == 0 && !cor1)) {
@@ -260,51 +264,67 @@ int ubifs_recover_master_node(struct ubifs_info *c)
 			 */
 			dbg_rcvry("recovery recovery");
 			mst = mst1;
+			pr_info("%s:%i\n", __func__, __LINE__);
 		} else if (mst2) {
 			offs2 = (void *)mst2 - buf2;
 			if (offs1 == offs2) {
 				/* Same offset, so must be the same */
 				if (memcmp((void *)mst1 + UBIFS_CH_SZ,
 					   (void *)mst2 + UBIFS_CH_SZ,
-					   UBIFS_MST_NODE_SZ - UBIFS_CH_SZ))
+					   UBIFS_MST_NODE_SZ - UBIFS_CH_SZ)) {
+					pr_info("%s:%i\n", __func__, __LINE__);
 					goto out_err;
+				}
 				mst = mst1;
 			} else if (offs2 + sz == offs1) {
 				/* 1st LEB was written, 2nd was not */
-				if (cor1)
+				if (cor1) {
+					pr_info("%s:%i\n", __func__, __LINE__);
 					goto out_err;
+				}
 				mst = mst1;
 			} else if (offs1 == 0 &&
 				   c->leb_size - offs2 - sz < sz) {
 				/* 1st LEB was unmapped and written, 2nd not */
-				if (cor1)
+				if (cor1) {
+					pr_info("%s:%i\n", __func__, __LINE__);
 					goto out_err;
+				}
 				mst = mst1;
-			} else
+			} else {
+				pr_info("%s:%i offs1 %08x offs2 %08x\n", __func__, __LINE__, offs1, offs2);
 				goto out_err;
+			}
 		} else {
 			/*
 			 * 2nd LEB was unmapped and about to be written, so
 			 * there must be only one master node in the first LEB
 			 * and no corruption.
 			 */
-			if (offs1 != 0 || cor1)
+			if (offs1 != 0 || cor1) {
+				pr_info("%s:%i\n", __func__, __LINE__);
 				goto out_err;
+			}
 			mst = mst1;
 		}
 	} else {
-		if (!mst2)
+		if (!mst2) {
+			pr_info("%s:%i\n", __func__, __LINE__);
 			goto out_err;
+		}
 		/*
 		 * 1st LEB was unmapped and about to be written, so there must
 		 * be no room left in 2nd LEB.
 		 */
 		offs2 = (void *)mst2 - buf2;
-		if (offs2 + sz + sz <= c->leb_size)
+		if (offs2 + sz + sz <= c->leb_size) {
+			pr_info("%s:%i\n", __func__, __LINE__);
 			goto out_err;
+		}
 		mst = mst2;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ubifs_msg(c, "recovered master node from LEB %d",
 		  (mst == mst1 ? UBIFS_MST_LNUM : UBIFS_MST_LNUM + 1));
 
@@ -358,9 +378,10 @@ int ubifs_recover_master_node(struct ubifs_info *c)
 	return 0;
 
 out_err:
+	pr_info("%s:%i\n", __func__, __LINE__);
 	err = -EINVAL;
 out_free:
-	ubifs_err(c, "failed to recover master node");
+	ubifs_err(c, "failed to recover master node (%d)", err);
 	if (mst1) {
 		ubifs_err(c, "dumping first master node");
 		ubifs_dump_node(c, mst1);
