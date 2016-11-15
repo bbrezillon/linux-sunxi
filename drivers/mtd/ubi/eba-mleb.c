@@ -468,9 +468,9 @@ struct ubi_peb_desc *remove_from_gc(struct ubi_volume *vol,
 		pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, entry->cpeb);
 		kfree(entry->cpeb);
 		entry->consolidated = false;
-		entry->pnum = UBI_LEB_UNMAPPED;
 	}
 
+	entry->pnum = UBI_LEB_UNMAPPED;
 	return pdesc;
 }
 
@@ -671,7 +671,7 @@ static struct ubi_peb_desc *invalidate_entry_unlocked(struct ubi_volume *vol,
 			} else if (entry->pnum >= 0) {
 				/*
 				 * The PEB was retained to hide an invalid
-				 * LEB. We're about to about update this LEB,
+				 * LEB. We're about to update this LEB,
 				 * free the previous PEB.
 				 */
 				ubi_assert(entry->nzombies);
