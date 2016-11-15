@@ -1339,9 +1339,6 @@ int ubi_wl_put_peb(struct ubi_device *ubi, const struct ubi_peb_desc *pdesc,
 	ubi_assert(pdesc->pnum >= 0);
 	ubi_assert(pdesc->pnum < ubi->peb_count);
 
-	if (pdesc->pnum >= ubi->peb_count)
-		pr_info("%s:%i PEB %d pdesc %p\n", __func__, __LINE__, pdesc->pnum, pdesc);
-
 	down_read(&ubi->fm_protect);
 
 retry:

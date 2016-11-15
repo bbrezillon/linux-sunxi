@@ -216,7 +216,6 @@ struct ubi_ainf_peb *ubi_alloc_apeb(struct ubi_attach_info *ai, int pnum,
 void ubi_free_apeb(struct ubi_attach_info *ai, struct ubi_ainf_peb *apeb)
 {
 	if (apeb->consolidated && apeb->mleb.cpeb) {
-		pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, apeb->mleb.cpeb);
 		kfree(apeb->mleb.cpeb);
 	}
 
@@ -709,13 +708,7 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 
 	ubi_assert(sqnum == apeb->sqnum + lpos);
 
-	pr_info("PEB %d, LEB %d:%d, sqnum %llu, lpos %d sqnum %llu\n",
-		pnum, vol_id, lnum, sqnum, lpos, apeb->sqnum);
-
 	dbg_bld("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d",
-		pnum, vol_id, lnum, apeb->ec, sqnum, apeb->scrub);
-
-	pr_info("PEB %d, LEB %d:%d, EC %d, sqnum %llu, bitflips %d\n",
 		pnum, vol_id, lnum, apeb->ec, sqnum, apeb->scrub);
 
 	av = add_volume(ai, vol_id, pnum, vid_hdr);
@@ -760,9 +753,6 @@ int ubi_add_to_av(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		 */
 
 		dbg_bld("this LEB already exists: PEB %d, sqnum %llu, EC %d",
-			ubi_ainf_get_pnum(aleb->peb), ubi_ainf_leb_sqnum(aleb),
-			aleb->peb->ec);
-		pr_info("this LEB already exists: PEB %d, sqnum %llu, EC %d\n",
 			ubi_ainf_get_pnum(aleb->peb), ubi_ainf_leb_sqnum(aleb),
 			aleb->peb->ec);
 
@@ -1004,7 +994,6 @@ struct ubi_ainf_peb *ubi_early_get_peb(struct ubi_device *ubi,
 
 		/* Free the cpeb object if the PEB was consolidated. */
 		if (apeb->consolidated) {
-			pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, apeb->mleb.cpeb);
 			kfree(apeb->mleb.cpeb);
 			apeb->consolidated = 0;
 		}
@@ -1130,7 +1119,6 @@ static struct ubi_ainf_peb *vidb_to_apeb(struct ubi_device *ubi,
 	}
 
 	apeb->consolidated = 1;
-	pr_info("%s:%i init cpeb = %p\n", __func__, __LINE__, cpeb);
 	apeb->mleb.cpeb = cpeb;
 	apeb->mleb.refcnt = 0;
 

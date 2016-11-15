@@ -82,7 +82,6 @@ static void cancel_conso(struct ubi_volume *vol)
 	if (!cpeb)
 		return;
 
-	pr_info("%s:%i PEB %d\n", __func__, __LINE__, cpeb->pnum);
 
 	pdesc = ubi_alloc_pdesc(vol->ubi, GFP_NOFS);
 	if (pdesc) {
@@ -93,7 +92,6 @@ static void cancel_conso(struct ubi_volume *vol)
 		ubi_wl_put_peb(vol->ubi, pdesc, 0);
 	}
 
-	pr_info("%s:%i free cpeb = %p\n", __func__, __LINE__, cpeb);
 	kfree(cpeb);
 }
 
