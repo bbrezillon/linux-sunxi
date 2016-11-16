@@ -1135,7 +1135,7 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 	int used_ebs = be32_to_cpu(vid_hdr->used_ebs);
 	int data_pad = be32_to_cpu(vid_hdr->data_pad);
 	int data_crc = be32_to_cpu(vid_hdr->data_crc);
-	int usable_leb_size = ubi->leb_size - data_pad;
+	int usable_leb_size, leb_size;
 
 	if (validate_version(ubi, vid_hdr->version)) {
 		ubi_err(ubi, "bad version in VID header");
@@ -1144,6 +1144,15 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 
 	if (validate_mode(ubi, vid_hdr))
 		goto bad;
+
+
+	if (vid_hdr->vol_mode == UBI_VID_MODE_SLC ||
+	    vid_hdr->vol_mode == UBI_VID_MODE_MLC_SAFE)
+		leb_size = ubi->slc_leb_size;
+	else
+		leb_size = ubi->leb_size;
+
+	usable_leb_size = leb_size - data_pad;
 
 	if (validate_lpos(ubi, vid_hdr))
 		goto bad;
@@ -1181,12 +1190,12 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 		goto bad;
 	}
 
-	if (data_pad >= ubi->leb_size / 2) {
+	if (data_pad >= leb_size / 2) {
 		ubi_err(ubi, "bad data_pad");
 		goto bad;
 	}
 
-	if (data_size > ubi->leb_size) {
+	if (data_size > leb_size) {
 		ubi_err(ubi, "bad data_size");
 		goto bad;
 	}

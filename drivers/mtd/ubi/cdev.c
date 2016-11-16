@@ -603,6 +603,7 @@ static int verify_mkvol_req(const struct ubi_device *ubi,
 			    const struct ubi_mkvol_req *req)
 {
 	int n, err = -EINVAL;
+	int leb_size;
 
 	if (req->bytes < 0 || req->alignment < 0 || req->vol_type < 0 ||
 	    req->name_len < 0)
@@ -628,12 +629,18 @@ static int verify_mkvol_req(const struct ubi_device *ubi,
 		goto bad;
 
 	/* SLC mode is only supported by UBI version 2 and later. */
-	if (req->vol_mode == UBI_VOL_MODE_SLC &&
-	    req->vol_mode == UBI_VOL_MODE_MLC_SAFE &&
-	    ubi->version < 2)
+	if (ubi->version < 2 &&
+	    (req->vol_mode == UBI_VOL_MODE_SLC ||
+	     req->vol_mode == UBI_VOL_MODE_MLC_SAFE))
 		goto bad;
 
-	if (req->alignment > ubi->leb_size)
+	if (req->vol_mode == UBI_VOL_MODE_SLC ||
+	    req->vol_mode == UBI_VOL_MODE_MLC_SAFE)
+		leb_size = ubi->slc_leb_size;
+	else
+		leb_size = ubi->leb_size;
+
+	if (req->alignment > leb_size)
 		goto bad;
 
 	n = req->alignment & (ubi->min_io_size - 1);

@@ -623,6 +623,7 @@ struct ubi_debug_info {
  * @hdrs_min_io_size: minimal I/O unit size used for VID and EC headers
  * @ro_mode: if the UBI device is in read-only mode
  * @leb_size: logical eraseblock size
+ * @slc_leb_size: logical eraseblock size when PEBs are used in SLC mode
  * @leb_start: starting offset of logical eraseblocks within physical
  *             eraseblocks
  * @ec_hdr_alsize: size of the EC header aligned to @hdrs_min_io_size
@@ -726,6 +727,7 @@ struct ubi_device {
 	int hdrs_min_io_size;
 	int ro_mode;
 	int leb_size;
+	int slc_leb_size;
 	int leb_start;
 	int ec_hdr_alsize;
 	int vid_hdr_alsize;

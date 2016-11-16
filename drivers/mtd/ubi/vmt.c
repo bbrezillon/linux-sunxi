@@ -328,8 +328,7 @@ int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req)
 	/* LEB size is adapted when SLC or MLC safe mode is requested. */
 	if (vol->vol_mode == UBI_VOL_MODE_SLC ||
 	    vol->vol_mode == UBI_VOL_MODE_MLC_SAFE)
-		vol->leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
-				ubi->leb_start;
+		vol->leb_size = ubi->slc_leb_size;
 	else
 		vol->leb_size = ubi->leb_size;
 

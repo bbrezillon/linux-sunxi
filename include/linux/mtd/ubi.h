@@ -158,6 +158,7 @@ static inline void ubi_sgl_init(struct ubi_sgl *usgl)
  * struct ubi_device_info - UBI device description data structure.
  * @ubi_num: ubi device number
  * @leb_size: logical eraseblock size on this UBI device
+ * @slc_leb_size: logical eraseblock size when PEBs are used in SLC mode
  * @leb_start: starting offset of logical eraseblocks within physical
  *             eraseblocks
  * @min_io_size: minimal I/O unit size
@@ -189,6 +190,7 @@ static inline void ubi_sgl_init(struct ubi_sgl *usgl)
 struct ubi_device_info {
 	int ubi_num;
 	int leb_size;
+	int slc_leb_size;
 	int leb_start;
 	int min_io_size;
 	int max_write_size;

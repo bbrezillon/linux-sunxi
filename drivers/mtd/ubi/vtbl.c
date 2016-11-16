@@ -172,7 +172,7 @@ static int vtbl_check(const struct ubi_device *ubi,
 		      const struct ubi_vtbl_record *vtbl)
 {
 	int i, n, reserved_pebs, alignment, data_pad, vol_type, name_len;
-	int vol_mode, upd_marker, err;
+	int vol_mode, upd_marker, err, leb_size;
 	uint32_t crc;
 	const char *name;
 
@@ -211,7 +211,12 @@ static int vtbl_check(const struct ubi_device *ubi,
 			goto bad;
 		}
 
-		if (alignment > ubi->leb_size || alignment == 0) {
+		if (vol_mode == UBI_VOL_MODE_SLC || UBI_VOL_MODE_MLC_SAFE)
+			leb_size = ubi->slc_leb_size;
+		else
+			leb_size = ubi->leb_size;
+
+		if (alignment > leb_size || alignment == 0) {
 			err = 4;
 			goto bad;
 		}
@@ -222,7 +227,7 @@ static int vtbl_check(const struct ubi_device *ubi,
 			goto bad;
 		}
 
-		n = ubi->leb_size % alignment;
+		n = leb_size % alignment;
 		if (data_pad != n) {
 			ubi_err(ubi, "bad data_pad, has to be %d", n);
 			err = 6;
@@ -592,14 +597,10 @@ static int init_volumes(struct ubi_device *ubi,
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
 		if (vtbl[i].vol_mode == UBI_VID_MODE_SLC) {
 			vol->vol_mode = UBI_VOL_MODE_SLC;
-			vol->leb_size = (ubi->peb_size /
-					 ubi->max_lebs_per_peb) -
-					ubi->leb_start;
+			vol->leb_size = ubi->slc_leb_size;
 		} else if (vtbl[i].vol_mode == UBI_VID_MODE_MLC_SAFE) {
 			vol->vol_mode = UBI_VOL_MODE_MLC_SAFE;
-			vol->leb_size = (ubi->peb_size /
-					 ubi->max_lebs_per_peb) -
-					ubi->leb_start;
+			vol->leb_size = ubi->slc_leb_size;
 			vol->slc_ratio = vtbl[i].slc_ratio;
 		} else {
 			vol->vol_mode = UBI_VOL_MODE_NORMAL;
@@ -692,8 +693,7 @@ static int init_volumes(struct ubi_device *ubi,
 	vol->vol_type = UBI_DYNAMIC_VOLUME;
 	vol->vol_mode = av->vol_mode;
 	if (vol->vol_mode == UBI_VOL_MODE_SLC)
-		vol->leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
-				ubi->leb_start;
+		vol->leb_size = ubi->slc_leb_size;
 	else
 		vol->leb_size = ubi->leb_size;
 	vol->name_len = sizeof(UBI_LAYOUT_VOLUME_NAME) - 1;
@@ -854,7 +854,7 @@ int ubi_read_volume_table(struct ubi_device *ubi, struct ubi_attach_info *ai)
 	 * The number of supported volumes is limited by the eraseblock size
 	 * and by the UBI_MAX_VOLUMES constant.
 	 */
-	ubi->vtbl_slots = ubi->leb_size / UBI_VTBL_RECORD_SIZE;
+	ubi->vtbl_slots = ubi->slc_leb_size / UBI_VTBL_RECORD_SIZE;
 	if (ubi->vtbl_slots > UBI_MAX_VOLUMES)
 		ubi->vtbl_slots = UBI_MAX_VOLUMES;
 

@@ -131,6 +131,8 @@ static ssize_t dev_attribute_show(struct device *dev,
 /* UBI device attributes (correspond to files in '/<sysfs>/class/ubi/ubiX') */
 static struct device_attribute dev_eraseblock_size =
 	__ATTR(eraseblock_size, S_IRUGO, dev_attribute_show, NULL);
+static struct device_attribute dev_slc_eraseblock_size =
+	__ATTR(slc_eraseblock_size, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_avail_eraseblocks =
 	__ATTR(avail_eraseblocks, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_total_eraseblocks =
@@ -369,6 +371,8 @@ static ssize_t dev_attribute_show(struct device *dev,
 
 	if (attr == &dev_eraseblock_size)
 		ret = sprintf(buf, "%d\n", ubi->leb_size);
+	else if (attr == &dev_slc_eraseblock_size)
+		ret = sprintf(buf, "%d\n", ubi->slc_leb_size);
 	else if (attr == &dev_avail_eraseblocks)
 		ret = sprintf(buf, "%d\n", ubi->avail_pebs);
 	else if (attr == &dev_total_eraseblocks)
@@ -400,6 +404,7 @@ static ssize_t dev_attribute_show(struct device *dev,
 
 static struct attribute *ubi_dev_attrs[] = {
 	&dev_eraseblock_size.attr,
+	&dev_slc_eraseblock_size.attr,
 	&dev_avail_eraseblocks.attr,
 	&dev_total_eraseblocks.attr,
 	&dev_volumes_count.attr,
@@ -765,6 +770,8 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 	}
 
 	ubi->leb_size = ubi->peb_size - ubi->leb_start;
+	ubi->slc_leb_size = (ubi->peb_size / ubi->max_lebs_per_peb) -
+			    ubi->leb_start;
 
 	if (!(ubi->mtd->flags & MTD_WRITEABLE)) {
 		ubi_msg(ubi, "MTD device %d is write-protected, attach in read-only mode",
@@ -1019,8 +1026,9 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 
 	ubi_msg(ubi, "attached mtd%d (name \"%s\", size %llu MiB)",
 		mtd->index, mtd->name, ubi->flash_size >> 20);
-	ubi_msg(ubi, "PEB size: %d bytes (%d KiB), LEB size: %d bytes",
-		ubi->peb_size, ubi->peb_size >> 10, ubi->leb_size);
+	ubi_msg(ubi, "PEB size: %d bytes (%d KiB), LEB size: %d bytes, SLC LEB size: %d bytes",
+		ubi->peb_size, ubi->peb_size >> 10, ubi->leb_size,
+		ubi->slc_leb_size);
 	ubi_msg(ubi, "min./max. I/O unit sizes: %d/%d, sub-page size %d",
 		ubi->min_io_size, ubi->max_write_size, ubi->hdrs_min_io_size);
 	ubi_msg(ubi, "VID header offset: %d (aligned %d), data offset: %d",
