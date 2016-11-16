@@ -133,6 +133,8 @@ static struct device_attribute dev_eraseblock_size =
 	__ATTR(eraseblock_size, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_slc_eraseblock_size =
 	__ATTR(slc_eraseblock_size, S_IRUGO, dev_attribute_show, NULL);
+static struct device_attribute dev_max_lebs_per_peb =
+	__ATTR(max_lebs_per_peb, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_avail_eraseblocks =
 	__ATTR(avail_eraseblocks, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_total_eraseblocks =
@@ -375,6 +377,8 @@ static ssize_t dev_attribute_show(struct device *dev,
 		ret = sprintf(buf, "%d\n", ubi->leb_size);
 	else if (attr == &dev_slc_eraseblock_size)
 		ret = sprintf(buf, "%d\n", ubi->slc_leb_size);
+	else if (attr == &dev_max_lebs_per_peb)
+		ret = sprintf(buf, "%d\n", ubi->max_lebs_per_peb);
 	else if (attr == &dev_avail_eraseblocks)
 		ret = sprintf(buf, "%d\n", ubi->avail_pebs);
 	else if (attr == &dev_total_eraseblocks)
@@ -409,6 +413,7 @@ static ssize_t dev_attribute_show(struct device *dev,
 static struct attribute *ubi_dev_attrs[] = {
 	&dev_eraseblock_size.attr,
 	&dev_slc_eraseblock_size.attr,
+	&dev_max_lebs_per_peb.attr,
 	&dev_avail_eraseblocks.attr,
 	&dev_total_eraseblocks.attr,
 	&dev_volumes_count.attr,
