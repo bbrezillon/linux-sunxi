@@ -389,32 +389,49 @@ static void cond_add_to_gc(struct ubi_volume *vol,
 	struct ubi_device *ubi = vol->ubi;
 	struct ubi_eba_mleb_table *tbl = to_mleb_table(vol->eba_tbl);
 	struct ubi_consolidated_peb *cpeb = entry->cpeb;
-	int i;
+	struct ubi_eba_mleb_entry *tmp;
+	int i, lnum, refcount, nzombies;
 
 	if (!entry->invalid || entry->nzombies)
 		return;
 
-	if (entry->consolidated) {
-		struct ubi_eba_mleb_entry *tmp;
-		int lnum = mleb_entry_to_lnum(tbl, entry);
-
-		for (i = 0; i < ubi->max_lebs_per_peb; i++) {
-			if (cpeb->lnums[i] == lnum)
-				continue;
-
-			tmp = &tbl->entries[cpeb->lnums[i]];
-
-			/* We still have a valid reference to this PEB. */
-			if (!tmp->invalid && tmp->consolidated &&
-			    tmp->cpeb == cpeb)
-				return;
-		}
+	if (!entry->consolidated) {
+		/*
+		 * This is the non-recursive case: the LEB was not
+		 * consolidated, just add it to the GC list and
+		 * break the recursive chain.
+		 */
+		ubi_assert(entry->pnum >= 0);
+		mleb_list_add_tail(&tbl->gc, entry);
+		return;
 	}
+
+	refcount = cpeb_refcount(vol, cpeb);
+	nzombies = cpeb_nzombies(vol, cpeb);
+
+	/*
+	 * We still have a valid reference to this PEB or it is hiding
+	 * other invalid LEBs, break the recursive chain.
+	 */
+	if (nzombies || refcount)
+		return;
 
 	pr_info("%s:%i add LEB %d:%d (PEB %d) to GC\n", __func__, __LINE__,
 		vol->vol_id, mleb_entry_to_lnum(tbl, entry),
 		entry->consolidated ? cpeb->pnum : entry->pnum);
 	mleb_list_add_tail(&tbl->gc, entry);
+
+	/* Recursively collect PEBs hiding this LEB. */
+	for (i = 0; i < ubi->max_lebs_per_peb; i++) {
+		tmp = &tbl->entries[cpeb->lnums[i]];
+
+		if (cpeb->lnums[i] >= vol->reserved_lebs ||
+		    cpeb->lnums[i] == lnum ||
+		    (tmp->consolidated && tmp->cpeb == cpeb))
+			continue;
+
+		cond_add_to_gc(vol, tmp);
+	}
 }
 
 struct ubi_peb_desc *remove_from_gc(struct ubi_volume *vol,
@@ -545,6 +562,7 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 	/* Re-insert the first valid LEB in the appropriate dirty list. */
 	for (i = 0; dirty && i < ubi->max_lebs_per_peb; i++) {
 		if (cpeb->lnums[i] >= vol->reserved_lebs ||
+		    tbl->entries[cpeb->lnums[i]].invalid ||
 		    !tbl->entries[cpeb->lnums[i]].consolidated ||
 		    tbl->entries[cpeb->lnums[i]].cpeb != cpeb ||
 		    cpeb->lnums[i] == lnum)
