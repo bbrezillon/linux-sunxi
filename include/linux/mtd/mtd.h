@@ -165,6 +165,8 @@ struct mtd_pairing_info {
 /**
  * struct mtd_pairing_scheme - page pairing scheme description
  *
+ * @name: name of the pairing scheme (this information is exposed in
+ *	  sysfs).
  * @ngroups: number of groups. Should be related to the number of bits
  *	     per cell.
  * @get_info: converts a write-unit (page number within an erase block) into
@@ -196,6 +198,7 @@ struct mtd_pairing_info {
  * mtd_wunit_to_pairing_info() documentation.
  */
 struct mtd_pairing_scheme {
+	const char *name;
 	int ngroups;
 	int (*get_info)(struct mtd_info *mtd, int wunit,
 			struct mtd_pairing_info *info);

@@ -4419,6 +4419,7 @@ static int nand_pairing_dist3_get_wunit(struct mtd_info *mtd,
 }
 
 const struct mtd_pairing_scheme dist3_pairing_scheme = {
+	.name = "mlc-dist3",
 	.ngroups = 2,
 	.get_info = nand_pairing_dist3_get_info,
 	.get_wunit = nand_pairing_dist3_get_wunit,
@@ -4468,6 +4469,7 @@ static int nand_pairing_dist6_get_wunit(struct mtd_info *mtd,
 }
 
 const struct mtd_pairing_scheme dist6_pairing_scheme = {
+	.name = "mlc-dist6",
 	.ngroups = 2,
 	.get_info = nand_pairing_dist6_get_info,
 	.get_wunit = nand_pairing_dist6_get_wunit,
