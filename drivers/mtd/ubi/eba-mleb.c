@@ -402,6 +402,10 @@ static void cond_add_to_gc(struct ubi_volume *vol,
 		 * break the recursive chain.
 		 */
 		ubi_assert(entry->pnum >= 0);
+		pr_info("%s:%i add LEB %d:%d (PEB %d) to GC\n",
+			__func__, __LINE__, vol->vol_id,
+			mleb_entry_to_lnum(tbl, entry),
+			entry->consolidated ? cpeb->pnum : entry->pnum);
 		mleb_list_add_tail(&tbl->gc, entry);
 		return;
 	}
@@ -430,6 +434,12 @@ static void cond_add_to_gc(struct ubi_volume *vol,
 		    (tmp->consolidated && tmp->cpeb == cpeb))
 			continue;
 
+		pr_info("%s:%i recursivity LEB %d:%d -> %d:%d (PEB %d -> %d)\n",
+			__func__, __LINE__, vol->vol_id,
+			mleb_entry_to_lnum(tbl, entry),
+			vol->vol_id, cpeb->lnums[i],
+			entry->consolidated ? cpeb->pnum : entry->pnum,
+			tmp->consolidated ? tmp->cpeb->pnum : tmp->pnum);
 		cond_add_to_gc(vol, tmp);
 	}
 }
@@ -544,6 +554,9 @@ ubi_eba_invalidate_cpeb_entry(struct ubi_volume *vol,
 			tmp_entry->nzombies--;
 			tbl->nzombies--;
 
+			pr_info("%s:%i LEB %d:%d nzombies = %d (total %d)\n",
+				__func__, __LINE__, vol->vol_id, cpeb->lnums[i],
+				tmp_entry->nzombies, tbl->nzombies);
 			cond_add_to_gc(vol, tmp_entry);
 		}
 	}
@@ -654,6 +667,11 @@ static struct ubi_peb_desc *invalidate_entry_unlocked(struct ubi_volume *vol,
 				if (!pdesc)
 					return ERR_PTR(-ENOMEM);
 			}
+
+			if (entry->nzombies)
+				pr_info("%s:%i LEB %d:%d nzombies = %d (total %d)\n",
+					__func__, __LINE__, vol->vol_id,
+					lnum, entry->nzombies, tbl->nzombies);
 		}
 	} else if (entry->consolidated) {
 		pdesc = ubi_eba_invalidate_cpeb_entry(vol, entry, upd);
@@ -667,6 +685,9 @@ static struct ubi_peb_desc *invalidate_entry_unlocked(struct ubi_volume *vol,
 			 */
 			entry->nzombies++;
 			tbl->nzombies++;
+			pr_info("%s:%i LEB %d:%d nzombies = %d (total %d)\n",
+				__func__, __LINE__, vol->vol_id, lnum, entry->nzombies,
+				tbl->nzombies);
 		}
 	} else {
 		/* The LEB is not consolidated. */
@@ -681,6 +702,11 @@ static struct ubi_peb_desc *invalidate_entry_unlocked(struct ubi_volume *vol,
 			if (!pdesc)
 				return ERR_PTR(-ENOMEM);
 		}
+
+		if (entry->nzombies)
+			pr_info("%s:%i LEB %d:%d nzombies = %d (total %d)\n",
+				__func__, __LINE__, vol->vol_id,
+				lnum, entry->nzombies, tbl->nzombies);
 
 		tbl->consolidable_lebs--;
 		mleb_list_del(&tbl->open, entry);
@@ -1067,6 +1093,9 @@ static int ubi_eba_mleb_init_entry(struct ubi_volume *vol,
 
 				tbl->entries[cpeb->lnums[i]].nzombies++;
 				tbl->nzombies++;
+				pr_info("%s:%i LEB %d:%d nzombies = %d (total %d)\n",
+					__func__, __LINE__, vol->vol_id, cpeb->lnums[i],
+					tbl->entries[cpeb->lnums[i]].nzombies, tbl->nzombies);
 			}
 		}
 	} else {
